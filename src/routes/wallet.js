@@ -111,8 +111,8 @@ router.post('/offline-tokens', async (req, res) => {
     const switchData = switchResponse.data;
     
     // ملاحظة: هيكل الرد يعتمد على اتفاقية المقسم، نفترض هنا أن التوكنز في switchData.data.tokens
-    if (switchResponse.status === 200 && switchData.success) {
-      const tokens = switchData.data.tokens;
+    if (switchResponse.status === 200 && switchData.status === 'success') {
+   const tokens = switchData.data.tokens;
 
       // 4. تحديث حالة المحفظة محلياً (عدد التوكنز النشطة وسقف الدفع)
       const wallet = await Wallet.findByPk(phone);
