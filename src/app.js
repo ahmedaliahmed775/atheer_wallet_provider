@@ -86,8 +86,10 @@ const startServer = async () => {
     await sequelize.authenticate();
     console.log('✅ تم الاتصال بقاعدة البيانات بنجاح');
 
-    // مزامنة نماذج قاعدة البيانات
-    await sequelize.sync({ alter: true });
+    // الإنتاج: بدون alter لتجنب تعديل الجداول تلقائياً؛ التطوير: يسمح بمزامنة الهيكل
+    const syncOpts =
+      process.env.NODE_ENV === 'production' ? { alter: false } : { alter: true };
+    await sequelize.sync(syncOpts);
     console.log('✅ تم مزامنة نماذج قاعدة البيانات');
 
     // تشغيل الخادم

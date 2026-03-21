@@ -1,19 +1,22 @@
-# DigitalOcean App Platform Specification
-# ملف إعدادات منصة DigitalOcean App Platform
+# DigitalOcean App Platform — خادم المحفظة (Wallet Provider)
+# استبدل YOUR_GITHUB_USER/YOUR_REPO بالمستودع الفعلي.
+# عيّن ATHEER_SWITCH_URL بعد نشر تطبيق المقسم.
 # https://docs.digitalocean.com/products/app-platform/reference/app-spec/
 
-name: atheer-server
+name: atheer-wallet
+
+region: fra
 
 services:
   - name: api
     github:
-      repo: ahmedaliahmed775/Atheer_Server
+      repo: ahmedaliahmed775/atheer-wallet-provider
       branch: main
       deploy_on_push: true
     dockerfile_path: Dockerfile
     http_port: 3000
     instance_count: 1
-    instance_size_slug: basic-xxs
+    instance_size_slug: basic-xs
     health_check:
       http_path: /
     envs:
@@ -31,16 +34,27 @@ services:
         value: ${db.USERNAME}
       - key: DB_PASSWORD
         value: ${db.PASSWORD}
-      - key: JWT_SECRET
         type: SECRET
-        value: "EWJhbGciOiJIUzI1NiIsInR5cCI6Replace-With-Secure-Secret"
+      - key: JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: ADMIN_EMAIL
+        scope: RUN_TIME
         value: admin@atheer.app
       - key: ADMIN_PASSWORD
+        scope: RUN_TIME
         type: SECRET
-        value: "Replace-With-Secure-Password"
+      - key: ATHEER_TOKEN_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: ATHEER_SWITCH_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: WALLET_API_KEY
+        scope: RUN_TIME
+        type: SECRET
 
 databases:
   - name: db
