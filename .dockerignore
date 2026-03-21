@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log*
+.env
+.git
+.gitignore
+README.md
+README
+DEPLOYMENT.md
+docker-compose.yml
+.DS_Store
+Thumbs.db
+coverage
+dist
+build
+.do
