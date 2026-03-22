@@ -27,7 +27,7 @@ const pgPool = new pg.Pool({
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  ...(process.env.NODE_ENV === 'production' && {
+  ...(process.env.DB_SSL === 'true' && {
     ssl: { require: true, rejectUnauthorized: false },
   }),
 });
@@ -135,7 +135,7 @@ const setupAdmin = (app) => {
         pool: pgPool,
         createTableIfMissing: true,
       }),
-      cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production' },
+      cookie: { httpOnly: true, secure: process.env.DB_SSL === 'true' },
     }
   );
 
