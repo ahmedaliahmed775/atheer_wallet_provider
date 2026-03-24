@@ -62,14 +62,20 @@ const setupAdmin = (app) => {
         resource: Wallet,
         options: {
           navigation: { name: 'إدارة النظام', icon: 'Money' },
-          // تم إضافة active_tokens هنا للعرض في الجداول
           listProperties: ['phone', 'balance', 'active_tokens'],
           showProperties: ['phone', 'balance', 'active_tokens'],
-          editProperties: ['balance', 'active_tokens'],
+          // 🔥 تعديل: أضفنا phone هنا لكي يظهر في صفحة الإنشاء والتعديل
+          editProperties: ['phone', 'balance', 'active_tokens', 'offline_payment_limit'],
           filterProperties: ['phone', 'active_tokens'],
           properties: {
-            phone: { isTitle: true },
+            // 🔥 تعديل: أجبرنا حقل الهاتف على الظهور في كل مكان لأنه Primary Key
+            phone: { 
+              isTitle: true,
+              isVisible: { edit: true, filter: true, list: true, show: true }
+            },
             balance: { type: 'currency', currency: 'YER' },
+            active_tokens: { isVisible: { edit: true, filter: true, list: true, show: true } },
+            offline_payment_limit: { type: 'currency', currency: 'YER' }
           }
         },
       },
@@ -98,13 +104,12 @@ const setupAdmin = (app) => {
       favicon: false,
       withMadeWithLove: false,
     },
-    // تعريب مصطلحات لوحة الإدارة الأساسية
     locale: {
       language: 'ar',
       translations: {
         labels: { User: 'المستخدمين', Wallet: 'المحافظ', Transaction: 'العمليات' },
         resources: {
-          Wallet: { properties: { phone: 'رقم الهاتف', balance: 'الرصيد', active_tokens: 'التوكنات النشطة' } },
+          Wallet: { properties: { phone: 'رقم الهاتف', balance: 'الرصيد', active_tokens: 'التوكنات النشطة', offline_payment_limit: 'سقف الدفع أوفلاين' } },
           User: { properties: { phone: 'رقم الهاتف', name: 'الاسم', role: 'الصلاحية', password: 'كلمة المرور' } },
           Transaction: { properties: { sender: 'المرسل', receiver: 'المستلم', amount: 'المبلغ', status: 'الحالة', createdAt: 'التاريخ' } }
         }
