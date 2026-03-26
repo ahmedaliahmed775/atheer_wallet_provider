@@ -37,13 +37,24 @@ const Transaction = sequelize.define(
       allowNull: false,
       defaultValue: 'ACCEPTED',
     },
-    // معرف فريد للعملية لمنع التكرار
+    // معرف فريد للعملية لمنع التكرار (القديم)
     nonce: {
       type: DataTypes.STRING(64),
       allowNull: true,
       unique: true,
     },
-    // مرجع إضافي (مثلاً لتخزين merchantId القادم من المقسم)
+    // معرف العملية الخاص بأثير (الجديد)
+    refId: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      unique: true,
+    },
+    // نوع العملية (مثلاً CASH_OUT)
+    transactionType: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    // مرجع إضافي (مثلاً لتخزين agentWallet القادم من المقسم)
     reference: {
       type: DataTypes.STRING(100),
       allowNull: true,
