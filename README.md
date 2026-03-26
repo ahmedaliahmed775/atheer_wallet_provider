@@ -1,113 +1,109 @@
 
-# Atheer Wallet Provider Server (Refactored v2.0)
+# Atheer Wallet Provider Server (Mock Server v3.0)
 
-هذا المشروع هو الجزء الخاص بمزود المحفظة المالية (Wallet Provider) ضمن نظام أثير للدفع اللاتصالي. تم إعادة هيكلته بالكامل ليعمل بالتكامل مع **مقسم أثير المركزي (Atheer Switch)**، حيث يعمل السيرفر الآن كمحفظة مالية (مثل JEEB) تتواصل مع المقسم المركزي لمعالجة العمليات.
+هذا المشروع هو محاكي لمزود المحفظة المالية (Wallet Provider) ضمن نظام أثير، تم إعادة بنائه وتحديثه ليتوافق تماماً مع بروتوكولات محفظة جوالي (Jawali Wallet) المذكورة في التوثيق الرسمي (`login.odt` و `ECOMMCASHOUT.docx`).
 
----
-
-## 📋 التغييرات الجوهرية في الإصدار 2.0
-
-1.  **إزالة منطق التشفير المحلي:** تم إزالة مكتبة `crypto` ومنطق فك تشفير التوكنز (`decodeAtheerToken`) من جانب المحفظة، حيث أصبح المقسم هو المسؤول عن إدارة وتشفير التوكنز.
-2.  **نظام البروكسي للتوكنز:** عند طلب العميل لتوكنز جديدة، يقوم السيرفر بإرسال طلب للمقسم وجلب التوكنز الجاهزة منه وتمريرها للتطبيق.
-3.  **مسار الشحن المركزي:** تم استبدال مسار الشحن القديم بمسار `/api/v1/merchant/switch-charge` المخصص لاستقبال طلبات الخصم الموثقة من المقسم فقط.
-4.  **تكامل البيانات:** يتم تحديث أرصدة العملاء وسجلات العمليات محلياً بناءً على توجيهات المقسم.
+يعمل هذا السيرفر كمحاكي (Mock Server) لمعالجة عمليات تسجيل الدخول والدفع المتداخلة، مع دعم كامل لهيكلية البيانات المطلوبة من قبل مقسم أثير المركزي.
 
 ---
 
-## 🚀 إعدادات البيئة (.env)
+## 📋 التحديثات الجوهرية في الإصدار 3.0
 
-يجب إضافة المتغيرات التالية لضمان الربط الصحيح مع المقسم:
+1.  **تحديث بروتوكول تسجيل الدخول:** دعم استقبال البيانات بصيغة `application/x-www-form-urlencoded` وإرجاع توكن متوافق مع معايير OAuth2 (access_token, token_type, expires_in).
+2.  **هيكلية الطلبات المتداخلة (Nested JSON):** تحديث مسار الدفع لاستقبال طلبات تحتوي على كائني `header` و `body` بشكل منفصل.
+3.  **منطق التحقق المزدوج:** إضافة شرط التحقق من صحة الـ `accessToken` وكلمة مرور المستخدم (Password) قبل إتمام أي عملية خصم من الرصيد.
+4.  **تحديث مسميات الحقول:** تغيير المسميات لتتوافق مع بروتوكول جوالي (مثل `agentWallet` بدلاً من `merchantId` و `receiverMobile` بدلاً من `customerMobile`).
+5.  **توسيع قاعدة البيانات:** إضافة حقول `refId` و `transactionType` لموديل المعاملات لضمان مطابقة البيانات بدقة.
 
-```env
-# رابط مقسم أثير المركزي
-ATHEER_SWITCH_URL=http://switch-backend:3000
+---
 
-# المفتاح السري لتعريف المحفظة لدى المقسم (X-Atheer-Api-Key)
-WALLET_API_KEY=your_secret_api_key_here
+## 📡 نقاط نهاية API المحدثة (Endpoints)
+
+### 1. تسجيل الدخول (Authentication)
+```
+POST /api/v1/auth/login
+Content-Type: application/x-www-form-urlencoded
+```
+**الحقول المطلوبة:**
+*   `grant_type`: نوع المنح (مثلاً password).
+*   `username`: رقم هاتف المستخدم.
+*   `password`: كلمة مرور المستخدم.
+*   `client_id` / `client_secret`: معرفات العميل.
+*   `scope`: نطاق الصلاحيات.
+
+**الاستجابة الناجحة:**
+```json
+{
+  "access_token": "eyJhbGci...",
+  "token_type": "Bearer",
+  "expires_in": 604800,
+  "userName": "اسم المستخدم",
+  "userPhone": "770000000"
+}
 ```
 
----
-
-## 📡 نقاط نهاية API (Endpoints)
-
-### 1. للمقسم المركزي (Atheer Switch)
-
-#### استقبال طلب خصم (Charge)
+### 2. عمليات الدفع والخصم (Merchant/Switch)
 ```
 POST /api/v1/merchant/switch-charge
+Content-Type: application/json
 ```
-**جسم الطلب:**
+**هيكلية الطلب (Nested JSON):**
 ```json
 {
-  "amount": 500,
-  "customerMobile": "770123456",
-  "merchantId": "MERC_001",
-  "nonce": "unique_nonce_from_switch"
-}
-```
-**الاستجابة:**
-```json
-{
-  "status": "ACCEPTED",
-  "providerRef": "uuid-transaction-id",
-  "message": "تمت عملية الخصم بنجاح."
-}
-```
-
-### 2. لتطبيق العميل (Mobile App)
-
-#### طلب توكنز للدفع أوفلاين (Proxy)
-```
-POST /api/v1/wallet/offline-tokens
-Authorization: Bearer <access_token>
-```
-**جسم الطلب:**
-```json
-{
-  "count": 5,
-  "limit": 5000
-}
-```
-**الاستجابة (تأتي من المقسم):**
-```json
-{
-  "success": true,
-  "data": {
-    "tokens": ["ATK_...", "ATK_..."],
-    "limit_applied": 5000
+  "header": {
+    "msgType": "CASH_OUT_REQ"
+  },
+  "body": {
+    "agentWallet": "AGENT_ID",
+    "receiverMobile": "770000000",
+    "amount": 1000,
+    "password": "user_password",
+    "accessToken": "valid_jwt_token",
+    "refId": "unique_reference_id"
   }
 }
 ```
 
-#### استعراض الرصيد والسجل
-*   `GET /api/v1/wallet/balance`: جلب الرصيد الحالي من قاعدة البيانات المحلية.
-*   `GET /api/v1/wallet/history`: جلب سجل العمليات التي تمت عبر هذه المحفظة.
+**الاستجابة الناجحة:**
+```json
+{
+  "header": {
+    "responseCode": "0000"
+  },
+  "body": {
+    "txnId": "internal_uuid",
+    "refId": "unique_reference_id",
+    "message": "تمت العملية بنجاح"
+  }
+}
+```
 
 ---
 
 ## 🏗️ هيكل المشروع المحدث
 
 ```
-Atheer_Server/
+atheer_wallet_provider/
 ├── src/
 │   ├── routes/
-│   │   ├── auth.js           # مصادقة المستخدمين (Signup/Login)
-│   │   ├── wallet.js         # إدارة الرصيد وطلب التوكنز (Proxy to Switch)
-│   │   └── merchant.js       # استقبال طلبات الخصم من المقسم (Switch-Charge)
+│   │   ├── auth.js           # مسار تسجيل الدخول (يدعم x-www-form-urlencoded)
+│   │   ├── merchant.js       # مسار الدفع (يدعم الهيكلية المتداخلة والتحقق من التوكن)
+│   │   └── wallet.js         # إدارة الرصيد والعمليات المحلية
 │   ├── models/
-│   │   ├── Wallet.js         # رصيد العميل وسقف الدفع وعدد التوكنز
-│   │   └── Transaction.js    # سجل العمليات المالية مع حقل المرجع (Reference)
-│   └── app.js                # تهيئة الخادم والمسارات
-└── .env.example              # الإعدادات المطلوبة للربط
+│   │   ├── User.js           # بيانات المستخدمين وكلمات المرور المشفرة
+│   │   ├── Wallet.js         # أرصدة المحافظ المالية
+│   │   └── Transaction.js    # سجل العمليات (يشمل refId و transactionType)
+│   └── app.js                # تهيئة الخادم والوسائط (Middleware)
+└── ...
 ```
 
 ---
 
 ## 🔒 الأمان والتحقق
 
-*   **Switch-Charge:** هذا المسار لا يتطلب JWT الخاص بالمستخدمين، بل يجب تأمينه على مستوى الشبكة (Firewall/IP Whitelist) للسماح فقط للمقسم بالاتصال به.
-*   **Wallet-API-Key:** يتم إرسال هذا المفتاح في ترويسة الطلب للمقسم لتعريف المحفظة وضمان موثوقية الطلب.
-*   **Transactions:** يتم استخدام نظام المعاملات (Sequelize Transactions) لضمان دقة الخصم من الرصيد وتحديث السجلات.
+*   **JWT Verification:** يتم فحص الـ `accessToken` المرسل في جسم طلب الدفع للتأكد من هوية المستخدم صاحب المحفظة.
+*   **Password Check:** يتم مطابقة كلمة المرور المرسلة في الطلب مع كلمة المرور المشفرة في قاعدة البيانات كطبقة حماية إضافية.
+*   **Idempotency:** يتم استخدام حقل `refId` لمنع تكرار معالجة نفس العملية أكثر من مرة.
 
 ---
-*نظام أثير - الجيل الثاني من المدفوعات اللاتصالية*
+*نظام أثير - محاكي مزود المحفظة المتوافق مع بروتوكول جوالي*
