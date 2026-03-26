@@ -3,7 +3,11 @@
 // تم إعادة هيكلة هذا الملف بالكامل ليعمل كنقطة نهاية (Endpoint) خاصة بمقسم أثير (Atheer Switch)
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { sequelize, Wallet, Transaction } from '../models/index.js';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { sequelize, User, Wallet, Transaction } from '../models/index.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'atheer_dev_secret_not_for_production';
 
 // زيادة الحد المسموح به للطلبات لتتناسب مع التواصل بين الخوادم
 const chargeLimiter = rateLimit({
@@ -33,131 +37,182 @@ router.use(chargeLimiter);
  * - يتم خصم المرسل وتغذية المستلم في معاملة واحدة
  */
 router.post('/switch-charge', async (req, res) => {
-  // 1. التحقق من صحة مفتاح API القادم من المقسم
-  const switchApiKey = req.headers['x-switch-api-key'];
-  if (!switchApiKey || switchApiKey !== process.env.SWITCH_API_KEY) {
-    return res.status(401).json({
-      status: 'REJECTED',
-      message: 'مفتاح API غير صالح أو مفقود.'
+  // 1. استخراج البيانات من الهيكلية المتداخلة (Nested JSON)
+  const { header, body } = req.body;
+
+  if (!header || !body) {
+    return res.status(400).json({
+      header: { responseCode: "9999" },
+      body: { message: "تنسيق الطلب غير صحيح، يجب أن يحتوي على header و body." }
     });
   }
 
-  // 2. استخراج البيانات من الطلب
-  const { amount, customerMobile, merchantId, nonce, transactionType, receiverAccount } = req.body;
+  const { 
+    agentWallet, // بدلاً من merchantId
+    receiverMobile, // بدلاً من customerMobile
+    amount, 
+    voucher, 
+    password, 
+    accessToken, 
+    refId 
+  } = body;
 
-  // 3. التحقق من اكتمال البيانات الأساسية
-  if (!amount || !customerMobile || !merchantId || !nonce || !transactionType || !receiverAccount) {
+  // 2. التحقق من وجود accessToken صحيح (الذي تم إصداره في خطوة Login)
+  if (!accessToken) {
+    return res.status(401).json({
+      header: { responseCode: "4001" },
+      body: { message: "accessToken مطلوب لإتمام العملية." }
+    });
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(accessToken, JWT_SECRET);
+  } catch (err) {
+    return res.status(401).json({
+      header: { responseCode: "4001" },
+      body: { message: "accessToken غير صالح أو منتهي الصلاحية." }
+    });
+  }
+
+  // 3. التحقق من كلمة المرور الصحيحة (للمستخدم صاحب التوكن)
+  const user = await User.findByPk(decoded.phone);
+  if (!user) {
+    return res.status(404).json({
+      header: { responseCode: "4004" },
+      body: { message: "المستخدم غير موجود." }
+    });
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+  if (!isPasswordValid) {
+    return res.status(401).json({
+      header: { responseCode: "4001" },
+      body: { message: "كلمة المرور غير صحيحة." }
+    });
+  }
+
+  // 4. التحقق من اكتمال البيانات الأساسية
+  if (!amount || !receiverMobile || !agentWallet || !refId) {
     return res.status(400).json({
-      status: 'REJECTED',
-      message: 'الطلب غير مكتمل، الحقول amount, customerMobile, merchantId, nonce, transactionType, receiverAccount مطلوبة.'
+      header: { responseCode: "9999" },
+      body: { message: "الطلب غير مكتمل، الحقول amount, receiverMobile, agentWallet, refId مطلوبة." }
     });
   }
 
   const chargeAmount = parseFloat(amount);
   if (isNaN(chargeAmount) || chargeAmount <= 0) {
     return res.status(400).json({
-      status: 'REJECTED',
-      message: 'المبلغ المدخل غير صالح.'
+      header: { responseCode: "9999" },
+      body: { message: "المبلغ المدخل غير صالح." }
     });
   }
 
-  // 4. التحقق من عدم تكرار العملية (Nonce)
+  // 5. التحقق من عدم تكرار العملية (refId)
   try {
-    const existingTx = await Transaction.findOne({ where: { nonce } });
+    const existingTx = await Transaction.findOne({ where: { refId } });
     if (existingTx) {
       return res.status(409).json({
-        status: 'REJECTED',
-        message: 'هذه العملية (Nonce) تم تنفيذها مسبقاً.'
+        header: { responseCode: "9999" },
+        body: { message: "هذه العملية (refId) تم تنفيذها مسبقاً." }
       });
     }
   } catch (error) {
-    console.error('خطأ أثناء التحقق من Nonce:', error);
-    return res.status(500).json({ status: 'ERROR', message: 'خطأ داخلي أثناء معالجة الطلب.' });
+    console.error('خطأ أثناء التحقق من refId:', error);
+    return res.status(500).json({ 
+      header: { responseCode: "5000" }, 
+      body: { message: "خطأ داخلي أثناء معالجة الطلب." } 
+    });
   }
 
-
-  // 5. بدء معاملة سيكولايز لضمان سلامة العمليات
+  // 6. بدء معاملة سيكولايز لضمان سلامة العمليات
   const dbTransaction = await sequelize.transaction();
   try {
-    // 6. البحث عن محفظة المرسل (العميل) وتأمينها
-    const customerWallet = await Wallet.findOne({
-      where: { phone: customerMobile },
+    // 7. البحث عن محفظة المرسل (العميل - صاحب التوكن) وتأمينها
+    const senderPhone = decoded.phone;
+    const senderWallet = await Wallet.findOne({
+      where: { phone: senderPhone },
       lock: dbTransaction.LOCK.UPDATE,
       transaction: dbTransaction,
     });
-    if (!customerWallet) {
+    if (!senderWallet) {
       await dbTransaction.rollback();
       return res.status(404).json({
-        status: 'REJECTED',
-        message: `لم يتم العثور على محفظة للعميل ${customerMobile}.`
+        header: { responseCode: "4004" },
+        body: { message: `لم يتم العثور على محفظة للمرسل ${senderPhone}.` }
       });
     }
 
-    // 7. البحث عن محفظة المستلم وتأمينها
+    // 8. البحث عن محفظة المستلم (receiverMobile) وتأمينها
     const receiverWallet = await Wallet.findOne({
-      where: { phone: receiverAccount },
+      where: { phone: receiverMobile },
       lock: dbTransaction.LOCK.UPDATE,
       transaction: dbTransaction,
     });
     if (!receiverWallet) {
       await dbTransaction.rollback();
       return res.status(404).json({
-        status: 'REJECTED',
-        message: 'حساب المستلم غير موجود.'
+        header: { responseCode: "4004" },
+        body: { message: "حساب المستلم غير موجود." }
       });
     }
 
-    // 8. التحقق من كفاية رصيد المرسل
-    const customerBalance = parseFloat(customerWallet.balance);
-    if (customerBalance < chargeAmount) {
+    // 9. التحقق من كفاية رصيد المرسل
+    const senderBalance = parseFloat(senderWallet.balance);
+    if (senderBalance < chargeAmount) {
       await dbTransaction.rollback();
       return res.status(402).json({
-        status: 'REJECTED',
-        message: 'رصيد العميل غير كافٍ.'
+        header: { responseCode: "4002" },
+        body: { message: "رصيد العميل غير كافٍ." }
       });
     }
 
-    // 9. خصم المبلغ من المرسل
-    await customerWallet.update(
-      { balance: customerBalance - chargeAmount },
+    // 10. خصم المبلغ من المرسل
+    await senderWallet.update(
+      { balance: senderBalance - chargeAmount },
       { transaction: dbTransaction }
     );
 
-    // 10. تغذية رصيد المستلم
+    // 11. تغذية رصيد المستلم
     const receiverBalance = parseFloat(receiverWallet.balance);
     await receiverWallet.update(
       { balance: receiverBalance + chargeAmount },
       { transaction: dbTransaction }
     );
 
-    // 11. إنشاء سجل المعاملة وتوثيق نوعها والمستلم الفعلي
+    // 12. إنشاء سجل المعاملة
     const newTransaction = await Transaction.create(
       {
-        sender: customerMobile,
-        receiver: receiverAccount,
+        sender: senderPhone,
+        receiver: receiverMobile,
         amount: chargeAmount,
         status: 'ACCEPTED',
-        nonce: nonce,
-        reference: merchantId, // معرف التاجر
-        transactionType: transactionType, // سيتم تجاهله حالياً في الجدول (يجب إضافته في النموذج لاحقاً)
+        refId: refId, // الحقل الجديد
+        reference: agentWallet, // تخزين معرف الوكيل/التاجر
+        transactionType: 'CASH_OUT',
       },
       { transaction: dbTransaction }
     );
 
     await dbTransaction.commit();
 
-    // 12. إرجاع استجابة نجاح
+    // 13. إرجاع استجابة نجاح متوافقة مع البروتوكول
     return res.status(200).json({
-      status: 'ACCEPTED',
-      providerRef: newTransaction.id,
-      message: 'تمت عملية التحويل بنجاح.'
+      header: {
+        responseCode: "0000"
+      },
+      body: {
+        txnId: newTransaction.id,
+        refId: refId,
+        message: "تمت العملية بنجاح"
+      }
     });
   } catch (error) {
-    await dbTransaction.rollback();
-    console.error('خطأ في معالجة عملية التحويل من المقسم:', error);
+    if (dbTransaction) await dbTransaction.rollback();
+    console.error('خطأ في معالجة عملية التحويل:', error);
     return res.status(500).json({
-      status: 'ERROR',
-      message: 'حدث خطأ داخلي في الخادم أثناء تنفيذ العملية.'
+      header: { responseCode: "5000" },
+      body: { message: "حدث خطأ داخلي في الخادم أثناء تنفيذ العملية." }
     });
   }
 });
