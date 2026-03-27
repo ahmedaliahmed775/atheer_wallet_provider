@@ -13,6 +13,7 @@ if (!process.env.JWT_SECRET) {
 
 const JWT_SECRET = process.env.JWT_SECRET || 'atheer_dev_secret_not_for_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const REFRESH_TOKEN_EXPIRES_IN = process.env.REFRESH_TOKEN_EXPIRES_IN || '30d';
 
 // تحديد معدل طلبات المصادقة للحماية من هجمات القوة العمياء
 // يسمح بـ 10 محاولات تسجيل دخول كل 15 دقيقة لكل عنوان IP
@@ -152,29 +153,100 @@ router.post('/login', authLimiter, async (req, res) => {
     }
 
     // إنشاء رمز JWT
-    const token = jwt.sign(
+    const accessToken = jwt.sign(
       { phone: user.phone, role: user.role, name: user.name },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    // حساب وقت الانتهاء بالثواني (افتراضي 7 أيام إذا لم يحدد في البيئة)
-    const expiresInSeconds = 7 * 24 * 60 * 60; 
+    // إنشاء رمز التحديث
+    const refreshToken = jwt.sign(
+      { phone: user.phone }, // Refresh token has minimal claims
+      JWT_SECRET,
+      { expiresIn: REFRESH_TOKEN_EXPIRES_IN }
+    );
+
+    // حساب وقت الانتهاء بالثواني (7 أيام)
+    // ملاحظة: هذا الحساب تقريبي، يفضل الاعتماد على مكتبة متخصصة
+    const expiresInSeconds = 7 * 24 * 60 * 60;
 
     // الاستجابة المتوافقة مع البروتوكول المطلوب
     return res.status(200).json({
-      access_token: token,
+      access_token: accessToken,
       token_type: "Bearer",
+      refresh_token: refreshToken,
       expires_in: expiresInSeconds,
       scope: req.body.scope || "read write",
-      userName: user.name,
-      userPhone: user.phone
     });
   } catch (error) {
     console.error('خطأ في تسجيل الدخول:', error);
     return res.status(500).json({
       error: "server_error",
       error_description: "حدث خطأ داخلي في الخادم"
+    });
+  }
+});
+
+
+/**
+ * POST /api/v1/auth/wallet-auth
+ * مصادقة المحفظة (PAYWA.WALLETAUTHENTICATION)
+ * واجهة متوافقة مع مواصفات جوالي لمصادقة الوكلاء
+ */
+router.post('/wallet-auth', authLimiter, async (req, res) => {
+  try {
+    const { identifier, password } = req.body;
+
+    // التحقق من الحقول الأساسية (identifier هو رقم الهاتف)
+    if (!identifier || !password) {
+      return res.status(400).json({
+        "ResponseCode": "1",
+        "ResponseMessage": "يرجى إدخال رقم المحفظة وكلمة المرور"
+      });
+    }
+
+    // البحث عن المستخدم (identifier = phone)
+    const user = await User.findByPk(identifier);
+    if (!user) {
+      return res.status(401).json({
+        "ResponseCode": "1",
+        "ResponseMessage": "بيانات الدخول غير صحيحة"
+      });
+    }
+
+    // مقارنة كلمة المرور
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        "ResponseCode": "1",
+        "ResponseMessage": "بيانات الدخول غير صحيحة"
+      });
+    }
+
+    // إنشاء رمز JWT (access_token)
+    const accessToken = jwt.sign(
+      { phone: user.phone, role: user.role, name: user.name },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN } // Using the same expiry as regular login
+    );
+
+    // TODO: org_value and org_name should be fetched from the user/organization model
+    // For now, returning placeholder values as per spec requirement.
+    const orgValue = "JAWALI";
+    const orgName = "Jawali Yemen";
+
+    // الاستجابة المتوافقة مع بروتوكول PAYWA.WALLETAUTHENTICATION
+    return res.status(200).json({
+      access_token: accessToken,
+      org_value: orgValue,
+      org_name: orgName
+    });
+
+  } catch (error) {
+    console.error('خطأ في مصادقة المحفظة:', error);
+    return res.status(500).json({
+      "ResponseCode": "1",
+      "ResponseMessage": "حدث خطأ داخلي في الخادم"
     });
   }
 });
