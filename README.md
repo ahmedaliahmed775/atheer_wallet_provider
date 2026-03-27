@@ -1,109 +1,104 @@
 
-# Atheer Wallet Provider Server (Mock Server v3.0)
 
-هذا المشروع هو محاكي لمزود المحفظة المالية (Wallet Provider) ضمن نظام أثير، تم إعادة بنائه وتحديثه ليتوافق تماماً مع بروتوكولات محفظة جوالي (Jawali Wallet) المذكورة في التوثيق الرسمي (`login.odt` و `ECOMMCASHOUT.docx`).
+# Jawali Wallet Provider (جوالي)
 
-يعمل هذا السيرفر كمحاكي (Mock Server) لمعالجة عمليات تسجيل الدخول والدفع المتداخلة، مع دعم كامل لهيكلية البيانات المطلوبة من قبل مقسم أثير المركزي.
-
----
-
-## 📋 التحديثات الجوهرية في الإصدار 3.0
-
-1.  **تحديث بروتوكول تسجيل الدخول:** دعم استقبال البيانات بصيغة `application/x-www-form-urlencoded` وإرجاع توكن متوافق مع معايير OAuth2 (access_token, token_type, expires_in).
-2.  **هيكلية الطلبات المتداخلة (Nested JSON):** تحديث مسار الدفع لاستقبال طلبات تحتوي على كائني `header` و `body` بشكل منفصل.
-3.  **منطق التحقق المزدوج:** إضافة شرط التحقق من صحة الـ `accessToken` وكلمة مرور المستخدم (Password) قبل إتمام أي عملية خصم من الرصيد.
-4.  **تحديث مسميات الحقول:** تغيير المسميات لتتوافق مع بروتوكول جوالي (مثل `agentWallet` بدلاً من `merchantId` و `receiverMobile` بدلاً من `customerMobile`).
-5.  **توسيع قاعدة البيانات:** إضافة حقول `refId` و `transactionType` لموديل المعاملات لضمان مطابقة البيانات بدقة.
+سيرفر محفظة إلكترونية متوافق 100% مع بروتوكول جوالي اليمنية (WeCash)
 
 ---
 
-## 📡 نقاط نهاية API المحدثة (Endpoints)
+## ⚡️ التغييرات الجوهرية (v4.0)
 
-### 1. تسجيل الدخول (Authentication)
-```
-POST /api/v1/auth/login
-Content-Type: application/x-www-form-urlencoded
-```
-**الحقول المطلوبة:**
-*   `grant_type`: نوع المنح (مثلاً password).
-*   `username`: رقم هاتف المستخدم.
-*   `password`: كلمة مرور المستخدم.
-*   `client_id` / `client_secret`: معرفات العميل.
-*   `scope`: نطاق الصلاحيات.
+- **هيكل الطلبات:** جميع الطلبات (POST/PUT) يجب أن تكون بصيغة JSON وتحتوي على كائنين رئيسيين:
+  - `header`: يحتوي على الحقول الإلزامية (`messageContext`, `messageId`, `messageTimestamp`, `callerId`)
+  - `body`: يحتوي على بيانات العملية الفعلية
+- **نظام القسائم (Voucher/OTP):**
+  - العميل يمكنه توليد قسيمة (Voucher) من رصيده عبر `/api/v1/wallet/generate-voucher`
+  - رمز القسيمة صالح لمدة 5 دقائق فقط ويُستهلك مرة واحدة
+- **خصم التاجر (E-Commerce Cashout):**
+  - التاجر لا يستطيع الخصم إلا باستخدام رمز قسيمة صالح
+  - يجب إرسال `agentWallet`, `password`, `accessToken`, و`voucher` في body الطلب
+- **توحيد الاستجابات:**
+  - كل استجابة ترجع بصيغة موحدة: `ResponseCode`, `ResponseMessage`, و`body`
 
-**الاستجابة الناجحة:**
-```json
+---
+
+## 🛠️ نقاط النهاية (Endpoints)
+
+### 1. توليد قسيمة (Voucher)
+```
+POST /api/v1/wallet/generate-voucher
+Content-Type: application/json
 {
-  "access_token": "eyJhbGci...",
-  "token_type": "Bearer",
-  "expires_in": 604800,
-  "userName": "اسم المستخدم",
-  "userPhone": "770000000"
+  "header": {
+    "messageContext": "VOUCHER_GEN",
+    "messageId": "...",
+    "messageTimestamp": "...",
+    "callerId": "..."
+  },
+  "body": {
+    "amount": 500
+  }
+}
+```
+**الاستجابة:**
+```
+{
+  "ResponseCode": 0,
+  "ResponseMessage": "تم إنشاء القسيمة بنجاح",
+  "body": {
+    "voucherCode": "ABC12345",
+    "amount": 500,
+    "expiresAt": "2026-03-28T12:34:56Z",
+    "status": "ACTIVE"
+  }
 }
 ```
 
-### 2. عمليات الدفع والخصم (Merchant/Switch)
+### 2. خصم التاجر (Cashout)
 ```
 POST /api/v1/merchant/switch-charge
 Content-Type: application/json
-```
-**هيكلية الطلب (Nested JSON):**
-```json
 {
   "header": {
-    "msgType": "CASH_OUT_REQ"
+    "messageContext": "CASHOUT_REQ",
+    "messageId": "...",
+    "messageTimestamp": "...",
+    "callerId": "..."
   },
   "body": {
-    "agentWallet": "AGENT_ID",
-    "receiverMobile": "770000000",
-    "amount": 1000,
-    "password": "user_password",
-    "accessToken": "valid_jwt_token",
-    "refId": "unique_reference_id"
+    "agentWallet": "770000001",
+    "password": "merchant_password",
+    "accessToken": "jwt_token",
+    "voucher": "ABC12345"
+  }
+}
+```
+**الاستجابة:**
+```
+{
+  "ResponseCode": 0,
+  "ResponseMessage": "تمت عملية الخصم بنجاح وإضافة المبلغ إلى التاجر.",
+  "body": {
+    "voucherCode": "ABC12345",
+    "amount": 500,
+    "merchantWallet": "770000001"
   }
 }
 ```
 
-**الاستجابة الناجحة:**
-```json
-{
-  "header": {
-    "responseCode": "0000"
-  },
-  "body": {
-    "txnId": "internal_uuid",
-    "refId": "unique_reference_id",
-    "message": "تمت العملية بنجاح"
-  }
-}
-```
+---
+
+## 🗄️ هيكل قاعدة البيانات
+- **Voucher:**
+  - id, customerId, amount, voucherCode, expiresAt, status (ACTIVE/CONSUMED/EXPIRED)
 
 ---
 
-## 🏗️ هيكل المشروع المحدث
-
-```
-atheer_wallet_provider/
-├── src/
-│   ├── routes/
-│   │   ├── auth.js           # مسار تسجيل الدخول (يدعم x-www-form-urlencoded)
-│   │   ├── merchant.js       # مسار الدفع (يدعم الهيكلية المتداخلة والتحقق من التوكن)
-│   │   └── wallet.js         # إدارة الرصيد والعمليات المحلية
-│   ├── models/
-│   │   ├── User.js           # بيانات المستخدمين وكلمات المرور المشفرة
-│   │   ├── Wallet.js         # أرصدة المحافظ المالية
-│   │   └── Transaction.js    # سجل العمليات (يشمل refId و transactionType)
-│   └── app.js                # تهيئة الخادم والوسائط (Middleware)
-└── ...
-```
+## 🛡️ الحماية
+- جميع الطلبات تمر عبر Middleware يفرض وجود header/body
+- كل الاستجابات موحدة الصيغة
+- لا يمكن خصم أي مبلغ إلا بقسيمة صالحة
 
 ---
 
-## 🔒 الأمان والتحقق
-
-*   **JWT Verification:** يتم فحص الـ `accessToken` المرسل في جسم طلب الدفع للتأكد من هوية المستخدم صاحب المحفظة.
-*   **Password Check:** يتم مطابقة كلمة المرور المرسلة في الطلب مع كلمة المرور المشفرة في قاعدة البيانات كطبقة حماية إضافية.
-*   **Idempotency:** يتم استخدام حقل `refId` لمنع تكرار معالجة نفس العملية أكثر من مرة.
-
----
-*نظام أثير - محاكي مزود المحفظة المتوافق مع بروتوكول جوالي*
+*تمت إعادة هيكلة المشروع بالكامل ليتوافق مع وثائق WALLETAUTHENTICATION و ECOMMCASHOUT الخاصة بمحفظة جوالي اليمنية.*

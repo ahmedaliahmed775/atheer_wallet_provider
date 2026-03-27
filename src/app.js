@@ -19,9 +19,14 @@ app.set('trust proxy', 1);
 setupAdmin(app);
 
 // وسيط تحليل طلبات JSON
+
 app.use(express.json());
-// وسيط تحليل طلبات النماذج المشفرة بـ URL
 app.use(express.urlencoded({ extended: true }));
+// === وسيط هيكل الطلبات حسب مواصفات جوالي ===
+const requestEnvelope = require('./middleware/requestEnvelope');
+const standardResponse = require('./middleware/standardResponse').default || require('./middleware/standardResponse');
+app.use(requestEnvelope);
+app.use(standardResponse);
 
 // ===== مسارات API =====
 // مسارات المصادقة: تسجيل الحساب وتسجيل الدخول

@@ -6,6 +6,9 @@ import { Op } from 'sequelize';
 import rateLimit from 'express-rate-limit';
 import axios from 'axios';
 import { Wallet, Transaction } from '../models/index.js';
+import { generateVoucher } from '../controllers/voucherController.js';
+// توليد قسيمة (Voucher) للعميل
+router.post('/generate-voucher', generateVoucher);
 import authenticate from '../middleware/authenticate.js';
 
 const walletLimiter = rateLimit({
