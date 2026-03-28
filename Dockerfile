@@ -23,6 +23,7 @@ COPY --from=builder /app/node_modules ./node_modules
 # نسخ ملفات المشروع
 COPY package.json ./
 COPY src ./src
+COPY create_user.js ./
 
 # تعيين متغيرات البيئة الافتراضية
 ENV NODE_ENV=production
