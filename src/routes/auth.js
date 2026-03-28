@@ -39,7 +39,8 @@ const MERCHANT_INITIAL_BALANCE = 0.0;
  */
 router.post('/signup', authLimiter, async (req, res) => {
   try {
-    const { phone, password, name, role } = req.body;
+    const payload = req.envelope ? req.envelope.body : req.body;
+    const { phone, password, name, role } = payload || {};
 
     // التحقق من إدخال جميع البيانات المطلوبة
     if (!phone || !password || !name) {
@@ -124,7 +125,8 @@ router.post('/login', authLimiter, async (req, res) => {
   try {
     // دعم استقبال البيانات من x-www-form-urlencoded أو JSON
     // الحقول المطلوبة حسب البروتوكول: grant_type, username, password, client_id, client_secret, scope
-    const { grant_type, username, password, client_id, client_secret } = req.body;
+    const payload = req.envelope ? req.envelope.body : req.body;
+    const { grant_type, username, password, client_id, client_secret } = payload || {};
 
     // التحقق من الحقول الأساسية (username هو رقم الهاتف في نظامنا)
     if (!username || !password) {
@@ -195,7 +197,8 @@ router.post('/login', authLimiter, async (req, res) => {
  */
 router.post('/wallet-auth', authLimiter, async (req, res) => {
   try {
-    const { identifier, password } = req.body;
+    const payload = req.envelope ? req.envelope.body : req.body;
+    const { identifier, password } = payload || {};
 
     // التحقق من الحقول الأساسية (identifier هو رقم الهاتف)
     if (!identifier || !password) {
