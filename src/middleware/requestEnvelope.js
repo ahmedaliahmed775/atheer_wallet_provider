@@ -1,7 +1,7 @@
 // middleware/requestEnvelope.js
 // Middleware عالمي لفرض هيكل الطلبات (header/body) حسب مواصفات جوالي
 
-module.exports = function requestEnvelope(req, res, next) {
+export default function requestEnvelope(req, res, next) {
   if (req.method === 'GET' || req.method === 'DELETE') {
     // السماح للطلبات التي لا تحمل body
     return next();
@@ -33,4 +33,4 @@ module.exports = function requestEnvelope(req, res, next) {
   }
   req.envelope = { header, body };
   next();
-};
+}

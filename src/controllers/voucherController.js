@@ -15,7 +15,7 @@ export async function generateVoucher(req, res) {
   try {
     const { header, body } = req.envelope;
     const { amount } = body || {};
-    const customerId = req.user.id;
+    const customerPhone = req.user.phone; // تصحيح: JWT يحتوي على phone وليس id
 
     if (!amount || isNaN(amount) || amount <= 0) {
       return res.status(400).json({
@@ -49,7 +49,7 @@ export async function generateVoucher(req, res) {
     // إنشاء القسيمة
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 دقائق
     const voucher = await Voucher.create({
-      customerId,
+      customerPhone, // تصحيح: اسم الحقل في المودل هو customerPhone
       amount,
       voucherCode,
       expiresAt,

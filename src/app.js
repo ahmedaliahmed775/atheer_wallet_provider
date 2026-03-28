@@ -8,6 +8,8 @@ import authRoutes from './routes/auth.js';
 import walletRoutes from './routes/wallet.js';
 import merchantRoutes from './routes/merchant.js';
 import setupAdmin from './admin/index.js';
+import requestEnvelope from './middleware/requestEnvelope.js';
+import standardResponse from './middleware/standardResponse.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -22,9 +24,7 @@ setupAdmin(app);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// === وسيط هيكل الطلبات حسب مواصفات جوالي ===
-const requestEnvelope = require('./middleware/requestEnvelope');
-const standardResponse = require('./middleware/standardResponse').default || require('./middleware/standardResponse');
+// === وسيط هيكل الطلبات والاستجابات حسب مواصفات جوالي ===
 app.use(requestEnvelope);
 app.use(standardResponse);
 
