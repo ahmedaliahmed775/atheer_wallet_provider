@@ -1,46 +1,35 @@
-// وسيط التحقق من هوية المستخدم باستخدام رمز JWT
 import jwt from 'jsonwebtoken';
-import 'dotenv/config';
+import { User } from '../models/index.js';
 
-// التحقق من وجود مفتاح JWT السري في متغيرات البيئة
-if (!process.env.JWT_SECRET) {
-  console.warn('⚠️  تحذير: JWT_SECRET غير محدد. استخدام قيمة افتراضية غير آمنة للبيئة التطويرية فقط.');
-}
-
-const JWT_SECRET = process.env.JWT_SECRET || 'atheer_dev_secret_not_for_production';
-
-/**
- * وسيط يتحقق من صحة رمز الوصول (Bearer Token)
- * ويضيف بيانات المستخدم إلى كائن الطلب
- */
-const authenticate = (req, res, next) => {
-  // استخراج رأس التفويض من الطلب
-  const authHeader = req.headers['authorization'];
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      success: false,
-      // رسالة خطأ: رمز الوصول مفقود أو بصيغة غير صحيحة
-      message: 'رمز الوصول مفقود أو بصيغة غير صحيحة',
-    });
-  }
-
-  // استخراج الرمز من الرأس (بعد كلمة "Bearer ")
-  const token = authHeader.split(' ')[1];
-
+export const authMiddleware = async (req, res, next) => {
   try {
-    // التحقق من صحة الرمز وفك تشفيره
-    const decoded = jwt.verify(token, JWT_SECRET);
-    // إضافة بيانات المستخدم إلى كائن الطلب لاستخدامها في المسارات
-    req.user = decoded;
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ ResponseCode: 401, ResponseMessage: 'يجب تسجيل الدخول أولاً' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret-key');
+
+    const user = await User.findByPk(decoded.id);
+    if (!user || !user.isActive) {
+      return res.status(401).json({ ResponseCode: 401, ResponseMessage: 'المستخدم غير موجود أو محظور' });
+    }
+
+    req.user = user;
     next();
   } catch (err) {
-    return res.status(401).json({
-      success: false,
-      // رسالة خطأ: رمز الوصول غير صالح أو منتهي الصلاحية
-      message: 'رمز الوصول غير صالح أو منتهي الصلاحية',
-    });
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ ResponseCode: 401, ResponseMessage: 'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً' });
+    }
+    return res.status(401).json({ ResponseCode: 401, ResponseMessage: 'توكن غير صالح' });
   }
 };
 
-export default authenticate;
+export const generateToken = (user) => {
+  return jwt.sign(
+    { id: user.id, phone: user.phone, role: user.role },
+    process.env.JWT_SECRET || 'dev-secret-key',
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+  );
+};
