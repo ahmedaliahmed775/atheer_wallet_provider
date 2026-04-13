@@ -1,116 +1,102 @@
-
-// src/app.js
-// نقطة الدخول الرئيسية لخادم Atheer Wallet Provider
-import 'dotenv/config';
 import express from 'express';
+import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 import { sequelize } from './models/index.js';
 import authRoutes from './routes/auth.js';
 import walletRoutes from './routes/wallet.js';
 import merchantRoutes from './routes/merchant.js';
-import setupAdmin from './admin/index.js';
-import requestEnvelope from './middleware/requestEnvelope.js';
-import standardResponse from './middleware/standardResponse.js';
+
+dotenv.config();
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const PORT = process.env.PORT || 3000;
 
-// الثقة في البروكسي
-app.set('trust proxy', 1);
-
-// ===== إعداد لوحة الإدارة AdminJS =====
-setupAdmin(app);
-
-// وسيط تحليل طلبات JSON
-
+// ─── Middleware ───────────────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// === وسيط هيكل الطلبات والاستجابات حسب مواصفات جوالي ===
-app.use(requestEnvelope);
-app.use(standardResponse);
 
-// ===== مسارات API =====
-// مسارات المصادقة: تسجيل الحساب وتسجيل الدخول
-app.use('/api/v1/auth', authRoutes);
-// مسارات المحفظة: الرصيد وسجل المعاملات وطلب التوكنز (Proxy)
-app.use('/api/v1/wallet', walletRoutes);
-// مسارات التاجر: استقبال طلبات الخصم من المقسم (Atheer Switch)
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  standardHeaders: true,
+  message: { ResponseCode: 429, ResponseMessage: 'طلبات كثيرة، حاول لاحقاً' }
+});
+app.use('/api/', limiter);
+
+// Auth routes get stricter limit
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { ResponseCode: 429, ResponseMessage: 'محاولات كثيرة، انتظر 15 دقيقة' }
+});
+app.use('/api/v1/auth/', authLimiter);
+
+// CORS
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+// ─── Routes ───────────────────────────────────────────────
+app.use('/api/v1/auth',     authRoutes);
+app.use('/api/v1/wallet',   walletRoutes);
 app.use('/api/v1/merchant', merchantRoutes);
 
-// مسار الصفحة الرئيسية للتحقق من حالة الخادم ووصف الخدمات
-app.get('/', (req, res) => {
-  res.json({
-    name: 'Atheer Wallet Provider - سيرفر المحفظة المالية',
-    version: '2.0.0 (Refactored)',
-    status: 'running',
-    uptime: process.uptime(),
-    endpoints: {
-      admin: '/admin',
-      api: '/api/v1',
-      auth: {
-        signup: 'POST /api/v1/auth/signup',
-        login: 'POST /api/v1/auth/login',
-      },
-      wallet: {
-        balance: 'GET /api/v1/wallet/balance',
-        history: 'GET /api/v1/wallet/history',
-        offline_tokens: 'POST /api/v1/wallet/offline-tokens (Proxy to Switch)',
-      },
-      merchant: {
-        switch_charge: 'POST /api/v1/merchant/switch-charge (For Atheer Switch only)',
-      },
-    },
-  });
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', version: '4.0.0', timestamp: new Date().toISOString() });
 });
 
-// معالج الأخطاء العامة
-app.use((err, req, res, next) => {
-  console.error('خطأ غير متوقع:', err);
-  if (res.headersSent) {
-    return next(err);
-  }
-  res.status(500).json({
-    success: false,
-    message: 'حدث خطأ داخلي غير متوقع في الخادم',
-  });
-});
-
-// معالج المسارات غير الموجودة
+// 404
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: `المسار المطلوب غير موجود: ${req.method} ${req.path}`,
-  });
+  res.status(404).json({ ResponseCode: 404, ResponseMessage: 'المسار غير موجود' });
 });
 
-/**
- * تهيئة قاعدة البيانات وتشغيل الخادم
- */
-const startServer = async () => {
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err.message);
+  res.status(500).json({ ResponseCode: 500, ResponseMessage: 'خطأ داخلي في الخادم' });
+});
+
+// ─── Start ────────────────────────────────────────────────
+async function start() {
   try {
-    // اختبار الاتصال بقاعدة البيانات
     await sequelize.authenticate();
-    console.log('✅ تم الاتصال بقاعدة البيانات بنجاح');
+    console.log('✅ قاعدة البيانات متصلة');
+    await sequelize.sync({ alter: true });
+    console.log('✅ جداول قاعدة البيانات محدّثة');
 
-    // الإنتاج: بدون alter لتجنب تعديل الجداول تلقائياً؛ التطوير: يسمح بمزامنة الهيكل
-    const syncOpts =
-      process.env.NODE_ENV === 'production' ? { alter: false } : { alter: true };
-    await sequelize.sync(syncOpts);
-    console.log('✅ تم مزامنة نماذج قاعدة البيانات');
+    // Seed demo users if empty
+    await seedDemoData();
 
-    // تشغيل الخادم
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`\n🚀 خادم Atheer Wallet يعمل على المنفذ ${PORT}`);
-      console.log(`📊 لوحة الإدارة: http://localhost:${PORT}/admin`);
-      console.log(`🔗 واجهة API: http://localhost:${PORT}/api/v1`);
+    app.listen(PORT, () => {
+      console.log(`🚀 السيرفر يعمل على http://localhost:${PORT}`);
     });
-  } catch (error) {
-    console.error('❌ فشل تشغيل الخادم:', error);
+  } catch (err) {
+    console.error('❌ فشل تشغيل السيرفر:', err);
     process.exit(1);
   }
-};
-
-if (process.env.NODE_ENV !== 'test') {
-  startServer();
 }
 
-export default app;
+async function seedDemoData() {
+  const { User } = await import('./models/index.js');
+  const count = await User.count();
+  if (count > 0) return;
+
+  const bcrypt = await import('bcryptjs');
+  const hash = (p) => bcrypt.default.hashSync(p, 10);
+
+  await User.bulkCreate([
+    { name: 'أحمد علي', phone: '777123456', passwordHash: hash('123456'), role: 'customer', balance: 25400 },
+    { name: 'سارة محمد', phone: '777654321', passwordHash: hash('123456'), role: 'customer', balance: 10000 },
+    { name: 'سوبرماركت المدينة', phone: '770000001', passwordHash: hash('123456'), role: 'merchant', balance: 0 },
+    { name: 'مطعم السعادة', phone: '770000002', passwordHash: hash('123456'), role: 'merchant', balance: 0 },
+  ]);
+  console.log('✅ بيانات تجريبية أُضيفت');
+}
+
+start();
