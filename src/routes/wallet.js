@@ -1,158 +1,218 @@
-
-// src/routes/wallet.js
-// تم إعادة هيكلة هذا الملف ليعمل كـ Proxy لمسار التوكنز مع المقسم المركزي
-import express from 'express';
+import { Router } from 'express';
 import { Op } from 'sequelize';
-import rateLimit from 'express-rate-limit';
-import axios from 'axios';
-import { Wallet, Transaction } from '../models/index.js';
-import { generateVoucher } from '../controllers/voucherController.js';
-import authenticate from '../middleware/authenticate.js';
+import { sequelize, User, Transaction, Voucher } from '../models/index.js';
+import { authMiddleware } from '../middleware/auth.js';
+import crypto from 'crypto';
 
-const walletLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: 'تجاوزت الحد المسموح به من الطلبات. يرجى المحاولة لاحقاً.' },
-});
+const router = Router();
+router.use(authMiddleware);
 
-const router = express.Router();
-router.use(walletLimiter);
-router.use(authenticate);
-
-// توليد قسيمة (Voucher) للعميل
-router.post('/generate-voucher', generateVoucher);
-
-// جلب الرصيد
+// ─── GET /api/v1/wallet/balance ───────────────────────────
 router.get('/balance', async (req, res) => {
   try {
-    const { phone } = req.user;
-    const wallet = await Wallet.findByPk(phone);
-    if (!wallet) return res.status(404).json({ success: false, message: 'لم يتم العثور على محفظة' });
-
-    return res.status(200).json({
-      success: true,
-      data: { phone, balance: parseFloat(wallet.balance), currency: 'YER' },
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: 'حدث خطأ داخلي' });
-  }
-});
-
-// جلب السجل
-router.get('/history', async (req, res) => {
-  try {
-    const { phone } = req.user;
-    const transactions = await Transaction.findAll({
-      where: { [Op.or]: [{ sender: phone }, { receiver: phone }] },
-      order: [['createdAt', 'DESC']],
-      limit: 50,
-    });
-
-    const formattedTransactions = transactions.map((tx) => ({
-      id: tx.id,
-      type: tx.sender === phone ? 'OUTGOING' : 'INCOMING',
-      sender: tx.sender,
-      receiver: tx.receiver,
-      amount: parseFloat(tx.amount),
-      status: tx.status,
-      createdAt: tx.createdAt,
-    }));
-
-    return res.status(200).json({
-      success: true,
-      data: { phone, total: formattedTransactions.length, transactions: formattedTransactions },
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: 'حدث خطأ داخلي' });
-  }
-});
-
-/**
- * POST /api/v1/wallet/offline-tokens
- * هذا المسار يعمل كـ Proxy للمقسم المركزي (Atheer Switch)
- * يقوم بإرسال طلب للمقسم لجلب التوكنز، ثم يقوم بتحديث حالة المحفظة محلياً.
- */
-router.post('/offline-tokens', async (req, res) => {
-  const { phone } = req.user;
-  const count = parseInt(req.body.count) || 5;
-  const limit = parseFloat(req.body.limit) || 5000.0;
-
-  // 1. التحقق من المدخلات الأساسية
-  if (count > 20 || count <= 0) {
-    return res.status(400).json({ success: false, message: 'عدد التوكنات يجب أن يكون بين 1 و 20' });
-  }
-  if (limit <= 0) {
-    return res.status(400).json({ success: false, message: 'سقف الدفع يجب أن يكون أكبر من الصفر' });
-  }
-
-  const ATHEER_SWITCH_URL = process.env.ATHEER_SWITCH_URL || 'http://switch-backend:3000';
-  const WALLET_API_KEY = process.env.WALLET_API_KEY;
-
-  if (!WALLET_API_KEY) {
-    console.error('❌ خطأ: المتغير WALLET_API_KEY غير موجود في إعدادات البيئة.');
-    return res.status(500).json({ success: false, message: 'خطأ في إعدادات الخادم.' });
-  }
-
-  try {
-    // 2. إرسال الطلب إلى المقسم (Atheer Switch)
-    const switchResponse = await axios.post(`${ATHEER_SWITCH_URL}/api/v1/payments/tokens/provision`, {
+    const user = await User.findByPk(req.user.id);
+    return res.json({
+      ResponseCode: 0,
+      ResponseMessage: 'تم جلب الرصيد بنجاح',
       body: {
-        providerName: 'JEEB', // اسم المحفظة (Wallet Provider)
-        customerId: phone,
-        count: count
+        balance: parseFloat(user.balance),
+        currency: 'YER',
+        phone: user.phone,
+        name: user.name,
+        role: user.role
       }
-    }, {
-      headers: {
-        'x-atheer-api-key': WALLET_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000 // 10 ثوانٍ كحد أقصى للانتظار
     });
+  } catch (err) {
+    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل جلب الرصيد' });
+  }
+});
 
-    // 3. التحقق من استجابة المقسم
-    const switchData = switchResponse.data;
-    
-    // ملاحظة: هيكل الرد يعتمد على اتفاقية المقسم، نفترض هنا أن التوكنز في switchData.data.tokens
-    if (switchResponse.status === 200 && switchData.status === 'success') {
-   const tokens = switchData.data.tokens;
+// ─── POST /api/v1/wallet/transfer ────────────────────────
+// P2P - customer to customer direct transfer
+router.post('/transfer', async (req, res) => {
+  const body = req.body?.body || req.body;
+  const { receiverPhone, amount, note } = body;
 
-      // 4. تحديث حالة المحفظة محلياً (عدد التوكنز النشطة وسقف الدفع)
-      const wallet = await Wallet.findByPk(phone);
-      if (wallet) {
-        await wallet.update({
-          active_tokens: tokens.length,
-          offline_payment_limit: limit
-        });
-      }
+  if (!receiverPhone || !amount || amount <= 0) {
+    return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رقم المستلم والمبلغ إلزاميان' });
+  }
+  if (receiverPhone === req.user.phone) {
+    return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'لا يمكن التحويل لنفسك' });
+  }
 
-      // 5. إرسال التوكنز لتطبيق الموبايل
-      return res.status(200).json({
-        success: true,
-        data: {
-          tokens: tokens,
-          limit_applied: limit
-        }
-      });
-    } else {
-      return res.status(switchResponse.status).json({
-        success: false,
-        message: switchData.message || 'فشل المقسم في تزويد التوكنز.'
-      });
+  const t = await sequelize.transaction();
+  try {
+    const sender   = await User.findByPk(req.user.id,                         { transaction: t, lock: true });
+    const receiver = await User.findOne({ where: { phone: receiverPhone } },   { transaction: t, lock: true });
+
+    if (!receiver) {
+      await t.rollback();
+      return res.status(404).json({ ResponseCode: 404, ResponseMessage: 'رقم الهاتف غير مسجل في النظام' });
+    }
+    if (parseFloat(sender.balance) < parseFloat(amount)) {
+      await t.rollback();
+      return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رصيدك غير كافٍ لإتمام هذه العملية' });
     }
 
-  } catch (error) {
-    console.error('خطأ أثناء التواصل مع المقسم:', error.response?.data || error.message);
-    
-    const statusCode = error.response?.status || 500;
-    const errorMessage = error.response?.data?.message || 'حدث خطأ أثناء التواصل مع مقسم أثير.';
+    sender.balance   = parseFloat(sender.balance)   - parseFloat(amount);
+    receiver.balance = parseFloat(receiver.balance) + parseFloat(amount);
+    await sender.save({ transaction: t });
+    await receiver.save({ transaction: t });
 
-    return res.status(statusCode).json({
-      success: false,
-      message: errorMessage
+    const refId = `TRF-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const txn = await Transaction.create({
+      senderId:   sender.id,
+      receiverId: receiver.id,
+      amount:     parseFloat(amount),
+      type:       'TRANSFER',
+      status:     'SUCCESS',
+      note:       note || 'تحويل',
+      refId
+    }, { transaction: t });
+
+    await t.commit();
+
+    return res.json({
+      ResponseCode: 0,
+      ResponseMessage: 'تم التحويل بنجاح',
+      body: {
+        transactionId: txn.id,
+        refId,
+        amount: parseFloat(amount),
+        receiverName: receiver.name,
+        receiverPhone: receiver.phone,
+        newBalance: parseFloat(sender.balance),
+        timestamp: txn.createdAt
+      }
     });
+  } catch (err) {
+    await t.rollback();
+    console.error('[TRANSFER]', err);
+    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشلت عملية التحويل' });
   }
+});
+
+// ─── POST /api/v1/wallet/generate-voucher ────────────────
+// Customer generates a voucher for merchant payment
+router.post('/generate-voucher', async (req, res) => {
+  const body = req.body?.body || req.body;
+  const { amount } = body;
+
+  if (!amount || parseFloat(amount) <= 0) {
+    return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'المبلغ إلزامي وأكبر من صفر' });
+  }
+  if (req.user.role !== 'customer') {
+    return res.status(403).json({ ResponseCode: 403, ResponseMessage: 'القسيمة متاحة للعملاء فقط' });
+  }
+
+  const t = await sequelize.transaction();
+  try {
+    const user = await User.findByPk(req.user.id, { transaction: t, lock: true });
+
+    if (parseFloat(user.balance) < parseFloat(amount)) {
+      await t.rollback();
+      return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رصيدك غير كافٍ لإنشاء هذه القسيمة' });
+    }
+
+    // Expire any old active vouchers for this user
+    await Voucher.update(
+      { status: 'EXPIRED' },
+      { where: { customerId: user.id, status: 'ACTIVE' }, transaction: t }
+    );
+
+    // Deduct balance and create voucher
+    user.balance = parseFloat(user.balance) - parseFloat(amount);
+    await user.save({ transaction: t });
+
+    const voucherCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    const voucher = await Voucher.create({
+      customerId: user.id,
+      amount: parseFloat(amount),
+      voucherCode,
+      expiresAt,
+      status: 'ACTIVE'
+    }, { transaction: t });
+
+    await t.commit();
+
+    return res.json({
+      ResponseCode: 0,
+      ResponseMessage: 'تم إنشاء القسيمة بنجاح',
+      body: {
+        voucherCode: voucher.voucherCode,
+        amount: parseFloat(amount),
+        expiresAt: voucher.expiresAt,
+        newBalance: parseFloat(user.balance),
+        status: 'ACTIVE'
+      }
+    });
+  } catch (err) {
+    await t.rollback();
+    console.error('[VOUCHER]', err);
+    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل إنشاء القسيمة' });
+  }
+});
+
+// ─── GET /api/v1/wallet/transactions ─────────────────────
+router.get('/transactions', async (req, res) => {
+  try {
+    const page  = parseInt(req.query.page  || '1');
+    const limit = parseInt(req.query.limit || '20');
+    const offset = (page - 1) * limit;
+    const uid = req.user.id;
+
+    const { count, rows } = await Transaction.findAndCountAll({
+      where: { [Op.or]: [{ senderId: uid }, { receiverId: uid }] },
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+      include: [
+        { model: User, as: 'sentTransactions',     attributes: ['name', 'phone'], foreignKey: 'senderId',   required: false },
+        { model: User, as: 'receivedTransactions', attributes: ['name', 'phone'], foreignKey: 'receiverId', required: false }
+      ]
+    });
+
+    const formatted = rows.map(txn => {
+      const isSender = txn.senderId === uid;
+      return {
+        id:           txn.id,
+        refId:        txn.refId,
+        type:         isSender ? 'DEBIT' : 'CREDIT',
+        txnType:      txn.type,
+        amount:       parseFloat(txn.amount),
+        counterparty: isSender ? txn.receivedTransactions?.name : txn.sentTransactions?.name,
+        counterPhone: isSender ? txn.receivedTransactions?.phone : txn.sentTransactions?.phone,
+        note:         txn.note,
+        status:       txn.status,
+        timestamp:    txn.createdAt
+      };
+    });
+
+    return res.json({
+      ResponseCode: 0,
+      ResponseMessage: 'تم جلب السجل بنجاح',
+      body: {
+        transactions: formatted,
+        total: count,
+        page,
+        pages: Math.ceil(count / limit)
+      }
+    });
+  } catch (err) {
+    console.error('[HISTORY]', err);
+    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل جلب سجل المعاملات' });
+  }
+});
+
+// ─── GET /api/v1/wallet/profile ──────────────────────────
+router.get('/profile', async (req, res) => {
+  const user = await User.findByPk(req.user.id);
+  return res.json({
+    ResponseCode: 0,
+    body: { id: user.id, name: user.name, phone: user.phone, role: user.role, balance: parseFloat(user.balance) }
+  });
 });
 
 export default router;
