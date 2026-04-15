@@ -2,14 +2,13 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
 import { sequelize, User, Transaction, Voucher } from '../models/index.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware } from '../middleware/authenticate.js';
 import crypto from 'crypto';
 
 const router = Router();
 
 // ─── POST /api/v1/merchant/switch-charge ─────────────────
 // Merchant redeems a voucher from a customer
-// Supports Jawali nested format { header: {...}, body: {...} } AND flat JSON
 router.post('/switch-charge', async (req, res) => {
   const body = req.body?.body || req.body;
   const { agentWallet, password, accessToken, voucher } = body;
@@ -23,7 +22,6 @@ router.post('/switch-charge', async (req, res) => {
 
   const t = await sequelize.transaction();
   try {
-    // Find merchant by phone (agentWallet)
     const merchant = await User.findOne({
       where: { phone: agentWallet, role: 'merchant', isActive: true },
       transaction: t, lock: true
@@ -33,14 +31,12 @@ router.post('/switch-charge', async (req, res) => {
       return res.status(404).json({ ResponseCode: 404, ResponseMessage: 'معرف التاجر غير صالح' });
     }
 
-    // Verify merchant password
     const passOk = await bcrypt.compare(password, merchant.passwordHash);
     if (!passOk) {
       await t.rollback();
       return res.status(401).json({ ResponseCode: 401, ResponseMessage: 'كلمة مرور التاجر غير صحيحة' });
     }
 
-    // Find active, non-expired voucher
     const voucherRecord = await Voucher.findOne({
       where: {
         voucherCode: voucher,
@@ -54,15 +50,12 @@ router.post('/switch-charge', async (req, res) => {
       return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رمز القسيمة غير صالح أو منتهي الصلاحية' });
     }
 
-    // Credit merchant
     merchant.balance = parseFloat(merchant.balance) + parseFloat(voucherRecord.amount);
     await merchant.save({ transaction: t });
 
-    // Consume voucher
     voucherRecord.status = 'CONSUMED';
     await voucherRecord.save({ transaction: t });
 
-    // Record transaction
     const refId = `CSH-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const txn = await Transaction.create({
       senderId:   voucherRecord.customerId,
@@ -96,15 +89,33 @@ router.post('/switch-charge', async (req, res) => {
   }
 });
 
+// ─── GET /api/v1/merchant/qr-info ────────────────────────
+// Returns merchant info for QR code display
+router.get('/qr-info', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'merchant') {
+      return res.status(403).json({ ResponseCode: 403, ResponseMessage: 'متاح للتجار فقط' });
+    }
+    return res.json({
+      ResponseCode: 0,
+      body: {
+        merchantName: req.user.name,
+        merchantPhone: req.user.phone,
+        qrData: JSON.stringify({ type: 'MERCHANT_PAY', phone: req.user.phone, name: req.user.name })
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل جلب بيانات QR' });
+  }
+});
+
 // ─── GET /api/v1/merchant/transactions ───────────────────
-// Merchant history (requires auth)
 router.get('/transactions', authMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'merchant') {
       return res.status(403).json({ ResponseCode: 403, ResponseMessage: 'متاح للتجار فقط' });
     }
 
-    const { Op } = await import('sequelize');
     const page  = parseInt(req.query.page  || '1');
     const limit = parseInt(req.query.limit || '20');
     const offset = (page - 1) * limit;
@@ -112,7 +123,10 @@ router.get('/transactions', authMiddleware, async (req, res) => {
     const { count, rows } = await Transaction.findAndCountAll({
       where: { receiverId: req.user.id },
       order: [['createdAt', 'DESC']],
-      limit, offset
+      limit, offset,
+      include: [
+        { model: User, as: 'sender', attributes: ['name', 'phone'] }
+      ]
     });
 
     const total = rows.reduce((s, r) => s + parseFloat(r.amount), 0);
@@ -122,13 +136,18 @@ router.get('/transactions', authMiddleware, async (req, res) => {
       body: {
         transactions: rows.map(t => ({
           id: t.id, refId: t.refId,
+          type: 'CREDIT',
+          txnType: t.type,
           amount: parseFloat(t.amount),
-          type: t.type, status: t.status,
-          note: t.note, timestamp: t.createdAt
+          counterparty: t.sender?.name || 'عميل',
+          counterPhone: t.sender?.phone || '',
+          note: t.note, status: t.status,
+          timestamp: t.createdAt
         })),
         total: count,
         totalAmount: total,
-        page
+        page,
+        pages: Math.ceil(count / limit)
       }
     });
   } catch (err) {
