@@ -28,7 +28,16 @@ router.post('/signup', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const initialBalance = role === 'customer' ? 5000 : 0;
 
-    const user = await User.create({ name, phone, passwordHash, role, balance: initialBalance });
+    let posNumber = null;
+    if (role === 'merchant') {
+      while (true) {
+        posNumber = Math.floor(100000 + Math.random() * 900000).toString();
+        const existingPos = await User.findOne({ where: { posNumber } });
+        if (!existingPos) break;
+      }
+    }
+
+    const user = await User.create({ name, phone, passwordHash, role, balance: initialBalance, posNumber });
     const token = generateToken(user);
 
     return res.status(201).json({
@@ -43,6 +52,7 @@ router.post('/signup', async (req, res) => {
           name: user.name,
           phone: user.phone,
           role: user.role,
+          posNumber: user.posNumber,
           balance: parseFloat(user.balance)
         }
       }
@@ -89,6 +99,7 @@ router.post('/login', async (req, res) => {
           name: user.name,
           phone: user.phone,
           role: user.role,
+          posNumber: user.posNumber,
           balance: parseFloat(user.balance)
         }
       }

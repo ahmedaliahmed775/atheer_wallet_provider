@@ -1,93 +1,11 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { Op } from 'sequelize';
-import { sequelize, User, Transaction, Voucher } from '../models/index.js';
+import { sequelize, User, Transaction } from '../models/index.js';
 import { authMiddleware } from '../middleware/authenticate.js';
 import crypto from 'crypto';
 
 const router = Router();
-
-// ─── POST /api/v1/merchant/switch-charge ─────────────────
-// Merchant redeems a voucher from a customer
-router.post('/switch-charge', async (req, res) => {
-  const body = req.body?.body || req.body;
-  const { agentWallet, password, accessToken, voucher } = body;
-
-  if (!agentWallet || !password || !accessToken || !voucher) {
-    return res.status(400).json({
-      ResponseCode: 400,
-      ResponseMessage: 'agentWallet وpassword وaccessToken وvoucher إلزامية'
-    });
-  }
-
-  const t = await sequelize.transaction();
-  try {
-    const merchant = await User.findOne({
-      where: { phone: agentWallet, role: 'merchant', isActive: true },
-      transaction: t, lock: true
-    });
-    if (!merchant) {
-      await t.rollback();
-      return res.status(404).json({ ResponseCode: 404, ResponseMessage: 'معرف التاجر غير صالح' });
-    }
-
-    const passOk = await bcrypt.compare(password, merchant.passwordHash);
-    if (!passOk) {
-      await t.rollback();
-      return res.status(401).json({ ResponseCode: 401, ResponseMessage: 'كلمة مرور التاجر غير صحيحة' });
-    }
-
-    const voucherRecord = await Voucher.findOne({
-      where: {
-        voucherCode: voucher,
-        status: 'ACTIVE',
-        expiresAt: { [Op.gt]: new Date() }
-      },
-      transaction: t, lock: true
-    });
-    if (!voucherRecord) {
-      await t.rollback();
-      return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رمز القسيمة غير صالح أو منتهي الصلاحية' });
-    }
-
-    merchant.balance = parseFloat(merchant.balance) + parseFloat(voucherRecord.amount);
-    await merchant.save({ transaction: t });
-
-    voucherRecord.status = 'CONSUMED';
-    await voucherRecord.save({ transaction: t });
-
-    const refId = `CSH-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-    const txn = await Transaction.create({
-      senderId:   voucherRecord.customerId,
-      receiverId: merchant.id,
-      amount:     parseFloat(voucherRecord.amount),
-      type:       'CASHOUT',
-      status:     'SUCCESS',
-      note:       `سداد عبر قسيمة: ${voucher}`,
-      refId
-    }, { transaction: t });
-
-    await t.commit();
-
-    return res.json({
-      ResponseCode: 0,
-      ResponseMessage: 'تمت عملية الخصم بنجاح',
-      body: {
-        transactionId: txn.id,
-        refId,
-        voucherCode: voucher,
-        amount: parseFloat(voucherRecord.amount),
-        merchantWallet: agentWallet,
-        merchantName: merchant.name,
-        timestamp: txn.createdAt
-      }
-    });
-  } catch (err) {
-    await t.rollback();
-    console.error('[CASHOUT]', err);
-    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشلت عملية الدفع' });
-  }
-});
 
 // ─── GET /api/v1/merchant/qr-info ────────────────────────
 // Returns merchant info for QR code display
@@ -101,7 +19,8 @@ router.get('/qr-info', authMiddleware, async (req, res) => {
       body: {
         merchantName: req.user.name,
         merchantPhone: req.user.phone,
-        qrData: JSON.stringify({ type: 'MERCHANT_PAY', phone: req.user.phone, name: req.user.name })
+        merchantPosNumber: req.user.posNumber,
+        qrData: JSON.stringify({ type: 'MERCHANT_PAY', posNumber: req.user.posNumber, name: req.user.name })
       }
     });
   } catch (err) {

@@ -39,15 +39,7 @@ export const Transaction = sequelize.define('Transaction', {
   metadata:    { type: DataTypes.JSONB, defaultValue: {} },
 }, { tableName: 'transactions', underscored: true });
 
-// ─── Voucher Model ────────────────────────────────────────
-export const Voucher = sequelize.define('Voucher', {
-  id:          { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-  customerId:  { type: DataTypes.INTEGER, allowNull: false },
-  amount:      { type: DataTypes.DECIMAL(15, 2), allowNull: false },
-  voucherCode: { type: DataTypes.STRING(20), allowNull: false, unique: true },
-  expiresAt:   { type: DataTypes.DATE, allowNull: false },
-  status:      { type: DataTypes.ENUM('ACTIVE', 'CONSUMED', 'EXPIRED'), defaultValue: 'ACTIVE' },
-}, { tableName: 'vouchers', underscored: true });
+
 
 // ─── CashoutCode Model ───────────────────────────────────
 // Used for cash withdrawal codes and external transfers
@@ -80,6 +72,6 @@ User.hasMany(Transaction, { foreignKey: 'senderId',   as: 'sentTransactions' });
 User.hasMany(Transaction, { foreignKey: 'receiverId', as: 'receivedTransactions' });
 Transaction.belongsTo(User, { foreignKey: 'senderId',   as: 'sender' });
 Transaction.belongsTo(User, { foreignKey: 'receiverId', as: 'receiver' });
-User.hasMany(Voucher,     { foreignKey: 'customerId', as: 'vouchers' });
+
 User.hasMany(CashoutCode, { foreignKey: 'userId',     as: 'cashoutCodes' });
 User.hasMany(BillPayment, { foreignKey: 'userId',     as: 'billPayments' });

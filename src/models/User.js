@@ -25,6 +25,12 @@ const User = sequelize.define(
       allowNull: false,
       defaultValue: 'customer',
     },
+    // رقم نقطة البيع للتاجر (6 أرقام)
+    posNumber: {
+      type: DataTypes.STRING(6),
+      allowNull: true,
+      unique: true,
+    },
     // الاسم الكامل للمستخدم
     name: {
       type: DataTypes.STRING(100),

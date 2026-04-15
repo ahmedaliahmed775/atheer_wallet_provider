@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Op } from 'sequelize';
-import { sequelize, User, Transaction, Voucher, CashoutCode, BillPayment } from '../models/index.js';
+import { sequelize, User, Transaction, CashoutCode, BillPayment } from '../models/index.js';
 import { authMiddleware } from '../middleware/authenticate.js';
 import crypto from 'crypto';
 
@@ -169,67 +169,6 @@ router.post('/transfer-external', async (req, res) => {
     await t.rollback();
     console.error('[EXTERNAL_TRANSFER]', err);
     return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل إرسال الحوالة' });
-  }
-});
-
-// ─── POST /api/v1/wallet/generate-voucher ────────────────
-// Customer generates a voucher for merchant payment
-router.post('/generate-voucher', async (req, res) => {
-  const body = req.body?.body || req.body;
-  const { amount } = body;
-
-  if (!amount || parseFloat(amount) <= 0) {
-    return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'المبلغ إلزامي وأكبر من صفر' });
-  }
-  if (req.user.role !== 'customer') {
-    return res.status(403).json({ ResponseCode: 403, ResponseMessage: 'القسيمة متاحة للعملاء فقط' });
-  }
-
-  const t = await sequelize.transaction();
-  try {
-    const user = await User.findByPk(req.user.id, { transaction: t, lock: true });
-
-    if (parseFloat(user.balance) < parseFloat(amount)) {
-      await t.rollback();
-      return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رصيدك غير كافٍ لإنشاء هذه القسيمة' });
-    }
-
-    await Voucher.update(
-      { status: 'EXPIRED' },
-      { where: { customerId: user.id, status: 'ACTIVE' }, transaction: t }
-    );
-
-    user.balance = parseFloat(user.balance) - parseFloat(amount);
-    await user.save({ transaction: t });
-
-    const voucherCode = crypto.randomBytes(4).toString('hex').toUpperCase();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-    const voucher = await Voucher.create({
-      customerId: user.id,
-      amount: parseFloat(amount),
-      voucherCode,
-      expiresAt,
-      status: 'ACTIVE'
-    }, { transaction: t });
-
-    await t.commit();
-
-    return res.json({
-      ResponseCode: 0,
-      ResponseMessage: 'تم إنشاء القسيمة بنجاح',
-      body: {
-        voucherCode: voucher.voucherCode,
-        amount: parseFloat(amount),
-        expiresAt: voucher.expiresAt,
-        newBalance: parseFloat(user.balance),
-        status: 'ACTIVE'
-      }
-    });
-  } catch (err) {
-    await t.rollback();
-    console.error('[VOUCHER]', err);
-    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل إنشاء القسيمة' });
   }
 });
 
@@ -430,16 +369,16 @@ router.post('/cash-in', async (req, res) => {
 // Customer pays merchant by entering merchant phone
 router.post('/qr-pay', async (req, res) => {
   const body = req.body?.body || req.body;
-  const { merchantPhone, amount, note } = body;
+  const { posNumber, amount, note } = body;
 
-  if (!merchantPhone || !amount || parseFloat(amount) <= 0) {
-    return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رقم التاجر والمبلغ إلزاميان' });
+  if (!posNumber || !amount || parseFloat(amount) <= 0) {
+    return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رقم نقطة البيع والمبلغ إلزاميان' });
   }
 
   const t = await sequelize.transaction();
   try {
     const customer = await User.findByPk(req.user.id, { transaction: t, lock: true });
-    const merchant = await User.findOne({ where: { phone: merchantPhone, role: 'merchant', isActive: true }, transaction: t, lock: true });
+    const merchant = await User.findOne({ where: { posNumber: posNumber, role: 'merchant', isActive: true }, transaction: t, lock: true });
 
     if (!merchant) {
       await t.rollback();
