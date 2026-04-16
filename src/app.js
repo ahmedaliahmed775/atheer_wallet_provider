@@ -93,8 +93,8 @@ async function seedDemoData() {
   await User.bulkCreate([
     { name: 'أحمد علي', phone: '777123456', passwordHash: hash('123456'), role: 'customer', balance: 25400 },
     { name: 'سارة محمد', phone: '777654321', passwordHash: hash('123456'), role: 'customer', balance: 10000 },
-    { name: 'سوبرماركت المدينة', phone: '770000001', passwordHash: hash('123456'), role: 'merchant', balance: 0 },
-    { name: 'مطعم السعادة', phone: '770000002', passwordHash: hash('123456'), role: 'merchant', balance: 0 },
+    { name: 'سوبرماركت المدينة', phone: '770000001', passwordHash: hash('123456'), role: 'merchant', balance: 0, posNumber: '100001' },
+    { name: 'مطعم السعادة', phone: '770000002', passwordHash: hash('123456'), role: 'merchant', balance: 0, posNumber: '100002' },
   ]);
   console.log('✅ بيانات تجريبية أُضيفت');
 }

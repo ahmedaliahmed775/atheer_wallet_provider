@@ -22,6 +22,7 @@ export const User = sequelize.define('User', {
   phone:        { type: DataTypes.STRING(20), allowNull: false, unique: true },
   passwordHash: { type: DataTypes.STRING, allowNull: false },
   role:         { type: DataTypes.ENUM('customer', 'merchant'), defaultValue: 'customer' },
+  posNumber:    { type: DataTypes.STRING(6), allowNull: true, unique: true },
   balance:      { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
   isActive:     { type: DataTypes.BOOLEAN, defaultValue: true },
 }, { tableName: 'users', underscored: true });

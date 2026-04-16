@@ -2,7 +2,7 @@
 import { AdminJS } from 'adminjs';
 import { buildAuthenticatedRouter } from '@adminjs/express';
 import { Database, Resource } from '@adminjs/sequelize';
-import { sequelize, User, Wallet, Transaction } from '../models/index.js';
+import { sequelize, User, Transaction, BillPayment, CashoutCode } from '../models/index.js';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import pg from 'pg';
@@ -12,14 +12,11 @@ import 'dotenv/config';
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
   console.warn('⚠️  تحذير: ADMIN_EMAIL أو ADMIN_PASSWORD غير محددين. سيتم استخدام البيانات الافتراضية للبيئة التطويرية فقط.');
 }
-if (!process.env.JWT_SECRET) {
-  console.warn('⚠️  تحذير: JWT_SECRET غير محدد. جلسات لوحة الإدارة ستستخدم مفتاحاً افتراضياً غير آمن.');
-}
 
-// مفتاح تشفير ملفات تعريف الارتباط (يجب أن يكون 32 حرفاً على الأقل)
+// مفتاح تشفير ملفات تعريف الارتباط
 const COOKIE_SECRET = process.env.JWT_SECRET || 'atheer_dev_cookie_secret_32_chars_!';
 
-// إعداد مخزن الجلسات باستخدام PostgreSQL لتجنب تحذير MemoryStore في الإنتاج
+// إعداد مخزن الجلسات باستخدام PostgreSQL
 const PgSession = connectPgSimple(session);
 const pgPool = new pg.Pool({
   host: process.env.DB_HOST,
@@ -32,7 +29,6 @@ const pgPool = new pg.Pool({
   }),
 });
 
-// إغلاق مجموعة اتصالات الجلسات عند إيقاف الخادم بشكل نظيف
 process.on('SIGTERM', () => pgPool.end());
 
 // تسجيل محوّل Sequelize مع AdminJS
@@ -49,33 +45,13 @@ const setupAdmin = (app) => {
         resource: User,
         options: {
           navigation: { name: 'إدارة النظام', icon: 'User' },
-          listProperties: ['phone', 'name', 'role'],
-          showProperties: ['phone', 'name', 'role'],
-          editProperties: ['phone', 'name', 'role', 'password'],
-          filterProperties: ['phone', 'name', 'role'],
+          listProperties: ['id', 'phone', 'name', 'role', 'posNumber', 'balance', 'isActive'],
+          showProperties: ['id', 'phone', 'name', 'role', 'posNumber', 'balance', 'isActive', 'createdAt'],
+          editProperties: ['name', 'phone', 'role', 'posNumber', 'balance', 'isActive'],
+          filterProperties: ['phone', 'name', 'role', 'isActive'],
           properties: {
             phone: { isTitle: true },
-          }
-        },
-      },
-      {
-        resource: Wallet,
-        options: {
-          navigation: { name: 'إدارة النظام', icon: 'Money' },
-          listProperties: ['phone', 'balance', 'active_tokens'],
-          showProperties: ['phone', 'balance', 'active_tokens'],
-          // 🔥 تعديل: أضفنا phone هنا لكي يظهر في صفحة الإنشاء والتعديل
-          editProperties: ['phone', 'balance', 'active_tokens', 'offline_payment_limit'],
-          filterProperties: ['phone', 'active_tokens'],
-          properties: {
-            // 🔥 تعديل: أجبرنا حقل الهاتف على الظهور في كل مكان لأنه Primary Key
-            phone: { 
-              isTitle: true,
-              isVisible: { edit: true, filter: true, list: true, show: true }
-            },
             balance: { type: 'currency', currency: 'YER' },
-            active_tokens: { isVisible: { edit: true, filter: true, list: true, show: true } },
-            offline_payment_limit: { type: 'currency', currency: 'YER' }
           }
         },
       },
@@ -88,12 +64,30 @@ const setupAdmin = (app) => {
             edit: { isAccessible: false },
             delete: { isAccessible: false },
           },
-          listProperties: ['id', 'sender', 'receiver', 'amount', 'status', 'createdAt'],
-          showProperties: ['id', 'sender', 'receiver', 'amount', 'status', 'createdAt', 'nonce'],
-          filterProperties: ['sender', 'receiver', 'status', 'createdAt'],
+          listProperties: ['id', 'type', 'amount', 'status', 'refId', 'createdAt'],
+          showProperties: ['id', 'senderId', 'receiverId', 'type', 'amount', 'status', 'note', 'refId', 'metadata', 'createdAt'],
+          filterProperties: ['type', 'status', 'createdAt'],
           properties: {
             amount: { type: 'currency', currency: 'YER' },
           }
+        },
+      },
+      {
+        resource: BillPayment,
+        options: {
+          navigation: { name: 'السجلات المالية', icon: 'Receipt' },
+          actions: { new: { isAccessible: false }, edit: { isAccessible: false }, delete: { isAccessible: false } },
+          listProperties: ['id', 'userId', 'category', 'provider', 'accountNumber', 'amount', 'status', 'createdAt'],
+          properties: { amount: { type: 'currency', currency: 'YER' } }
+        },
+      },
+      {
+        resource: CashoutCode,
+        options: {
+          navigation: { name: 'السجلات المالية', icon: 'Key' },
+          actions: { new: { isAccessible: false }, edit: { isAccessible: false }, delete: { isAccessible: false } },
+          listProperties: ['id', 'userId', 'type', 'amount', 'code', 'status', 'expiresAt', 'createdAt'],
+          properties: { amount: { type: 'currency', currency: 'YER' } }
         },
       },
     ],
@@ -107,11 +101,12 @@ const setupAdmin = (app) => {
     locale: {
       language: 'ar',
       translations: {
-        labels: { User: 'المستخدمين', Wallet: 'المحافظ', Transaction: 'العمليات' },
+        labels: { User: 'المستخدمين', Transaction: 'المعاملات', BillPayment: 'سداد الفواتير', CashoutCode: 'أكواد السحب' },
         resources: {
-          Wallet: { properties: { phone: 'رقم الهاتف', balance: 'الرصيد', active_tokens: 'التوكنات النشطة', offline_payment_limit: 'سقف الدفع أوفلاين' } },
-          User: { properties: { phone: 'رقم الهاتف', name: 'الاسم', role: 'الصلاحية', password: 'كلمة المرور' } },
-          Transaction: { properties: { sender: 'المرسل', receiver: 'المستلم', amount: 'المبلغ', status: 'الحالة', createdAt: 'التاريخ' } }
+          User: { properties: { phone: 'رقم الهاتف', name: 'الاسم', role: 'الصلاحية', posNumber: 'رقم نقطة البيع', balance: 'الرصيد', isActive: 'فعّال' } },
+          Transaction: { properties: { senderId: 'المرسل', receiverId: 'المستلم', amount: 'المبلغ', status: 'الحالة', type: 'النوع', note: 'ملاحظة', refId: 'المرجع', createdAt: 'التاريخ' } },
+          BillPayment: { properties: { userId: 'المستخدم', category: 'الفئة', provider: 'المزوّد', accountNumber: 'رقم الحساب', amount: 'المبلغ', status: 'الحالة' } },
+          CashoutCode: { properties: { userId: 'المستخدم', type: 'النوع', amount: 'المبلغ', code: 'الكود', status: 'الحالة', expiresAt: 'ينتهي في' } }
         }
       }
     }
