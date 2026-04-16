@@ -38,6 +38,7 @@ export const User = sequelize.define('User', {
   posNumber:    { type: DataTypes.STRING(6), allowNull: true, unique: true },
   balance:      { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
   isActive:     { type: DataTypes.BOOLEAN, defaultValue: true },
+  fcmToken:     { type: DataTypes.TEXT, allowNull: true },
 }, { tableName: 'users', underscored: true });
 
 // ─── Transaction Model ────────────────────────────────────
@@ -46,8 +47,8 @@ export const Transaction = sequelize.define('Transaction', {
   senderId:    { type: DataTypes.INTEGER, allowNull: true },
   receiverId:  { type: DataTypes.INTEGER, allowNull: true },
   amount:      { type: DataTypes.DECIMAL(15, 2), allowNull: false },
-  type:        { type: DataTypes.ENUM('TRANSFER', 'CASHOUT', 'TOPUP', 'BILL_PAYMENT', 'EXTERNAL_TRANSFER', 'CASH_IN', 'CASH_OUT', 'QR_PAYMENT'), defaultValue: 'TRANSFER' },
-  status:      { type: DataTypes.ENUM('SUCCESS', 'FAILED', 'PENDING'), defaultValue: 'SUCCESS' },
+  type:        { type: DataTypes.ENUM('TRANSFER', 'CASHOUT', 'TOPUP', 'BILL_PAYMENT', 'EXTERNAL_TRANSFER', 'CASH_IN', 'CASH_OUT', 'QR_PAYMENT', 'JAWALI_INQUIRY', 'JAWALI_CASHOUT'), defaultValue: 'TRANSFER' },
+  status:      { type: DataTypes.ENUM('SUCCESS', 'FAILED', 'PENDING', 'INQUIRY'), defaultValue: 'SUCCESS' },
   note:        { type: DataTypes.STRING(255) },
   refId:       { type: DataTypes.STRING(100), unique: true },
   metadata:    { type: DataTypes.JSONB, defaultValue: {} },
@@ -81,11 +82,26 @@ export const BillPayment = sequelize.define('BillPayment', {
   status:        { type: DataTypes.ENUM('SUCCESS', 'FAILED', 'PENDING'), defaultValue: 'SUCCESS' },
 }, { tableName: 'bill_payments', underscored: true });
 
+// ─── JawaliSession Model ─────────────────────────────────
+// Tracks Jawali dual-layer authentication tokens
+export const JawaliSession = sequelize.define('JawaliSession', {
+  id:           { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  userId:       { type: DataTypes.INTEGER, allowNull: false },
+  accessToken:  { type: DataTypes.TEXT, allowNull: false },
+  walletToken:  { type: DataTypes.TEXT, allowNull: true },
+  orgId:        { type: DataTypes.STRING(50), defaultValue: 'atheer-org-001' },
+  externalUser: { type: DataTypes.STRING(50), allowNull: true },
+  expiresAt:    { type: DataTypes.DATE, allowNull: false },
+  status:       { type: DataTypes.ENUM('ACTIVE', 'EXPIRED'), defaultValue: 'ACTIVE' },
+}, { tableName: 'jawali_sessions', underscored: true });
+
 // ─── Associations ─────────────────────────────────────────
 User.hasMany(Transaction, { foreignKey: 'senderId',   as: 'sentTransactions' });
 User.hasMany(Transaction, { foreignKey: 'receiverId', as: 'receivedTransactions' });
 Transaction.belongsTo(User, { foreignKey: 'senderId',   as: 'sender' });
 Transaction.belongsTo(User, { foreignKey: 'receiverId', as: 'receiver' });
 
-User.hasMany(CashoutCode, { foreignKey: 'userId',     as: 'cashoutCodes' });
-User.hasMany(BillPayment, { foreignKey: 'userId',     as: 'billPayments' });
+User.hasMany(CashoutCode,    { foreignKey: 'userId', as: 'cashoutCodes' });
+User.hasMany(BillPayment,    { foreignKey: 'userId', as: 'billPayments' });
+User.hasMany(JawaliSession,  { foreignKey: 'userId', as: 'jawaliSessions' });
+JawaliSession.belongsTo(User, { foreignKey: 'userId', as: 'user' });

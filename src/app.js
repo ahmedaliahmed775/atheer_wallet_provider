@@ -5,6 +5,7 @@ import { sequelize } from './models/index.js';
 import authRoutes from './routes/auth.js';
 import walletRoutes from './routes/wallet.js';
 import merchantRoutes from './routes/merchant.js';
+import paygateRoutes from './routes/paygateRoutes.js';
 
 dotenv.config();
 
@@ -46,6 +47,9 @@ app.use('/api/v1/auth',     authRoutes);
 app.use('/api/v1/wallet',   walletRoutes);
 app.use('/api/v1/merchant', merchantRoutes);
 
+// ─── Jawali Paygate (محاكاة مطابقة لبوابة جوالي) ─────────
+app.use('/paygate', paygateRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: '4.0.0', timestamp: new Date().toISOString() });
@@ -73,8 +77,8 @@ async function start() {
     // Seed demo users if empty
     await seedDemoData();
 
-    app.listen(PORT, () => {
-      console.log(`🚀 السيرفر يعمل على http://localhost:${PORT}`);
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 السيرفر يعمل على http://0.0.0.0:${PORT}`);
     });
   } catch (err) {
     console.error('❌ فشل تشغيل السيرفر:', err);
