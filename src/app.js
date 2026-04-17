@@ -47,8 +47,10 @@ app.use('/api/v1/auth',     authRoutes);
 app.use('/api/v1/wallet',   walletRoutes);
 app.use('/api/v1/merchant', merchantRoutes);
 
-// ─── Jawali Paygate (محاكاة مطابقة لبوابة جوالي) ─────────
-app.use('/paygate', paygateRoutes);
+// ─── Jawali Paygate (محاكاة مطابقة ١٠٠٪ لبوابة جوالي) ────
+// POST /oauth/token     → تسجيل دخول OAuth2
+// POST /v1/ws/callWS    → كل العمليات (PAYWA/PAYAG) عبر serviceName
+app.use('/', paygateRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
