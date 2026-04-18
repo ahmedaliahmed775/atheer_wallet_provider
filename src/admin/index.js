@@ -1,8 +1,9 @@
 // إعداد لوحة الإدارة AdminJS لإدارة بيانات النظام
+// ★ تعديل: إضافة JawaliSession كـ resource
 import { AdminJS } from 'adminjs';
 import { buildAuthenticatedRouter } from '@adminjs/express';
 import { Database, Resource } from '@adminjs/sequelize';
-import { sequelize, User, Transaction, BillPayment, CashoutCode } from '../models/index.js';
+import { sequelize, User, Transaction, BillPayment, CashoutCode, JawaliSession } from '../models/index.js';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import pg from 'pg';
@@ -90,6 +91,25 @@ const setupAdmin = (app) => {
           properties: { amount: { type: 'currency', currency: 'YER' } }
         },
       },
+      // ★ إضافة: JawaliSession في لوحة الإدارة
+      {
+        resource: JawaliSession,
+        options: {
+          navigation: { name: 'بوابة جوالي', icon: 'Shield' },
+          actions: {
+            new: { isAccessible: false },
+            edit: { isAccessible: false },
+            delete: { isAccessible: false },
+          },
+          listProperties: ['id', 'userId', 'orgId', 'externalUser', 'status', 'expiresAt', 'createdAt'],
+          showProperties: ['id', 'userId', 'accessToken', 'walletToken', 'orgId', 'externalUser', 'status', 'expiresAt', 'createdAt'],
+          filterProperties: ['status', 'orgId', 'createdAt'],
+          properties: {
+            accessToken: { isTitle: false, type: 'string' },
+            walletToken: { type: 'string' },
+          }
+        },
+      },
     ],
     rootPath: '/admin',
     branding: {
@@ -101,12 +121,30 @@ const setupAdmin = (app) => {
     locale: {
       language: 'ar',
       translations: {
-        labels: { User: 'المستخدمين', Transaction: 'المعاملات', BillPayment: 'سداد الفواتير', CashoutCode: 'أكواد السحب' },
+        labels: {
+          User: 'المستخدمين',
+          Transaction: 'المعاملات',
+          BillPayment: 'سداد الفواتير',
+          CashoutCode: 'أكواد السحب',
+          JawaliSession: 'جلسات جوالي',  // ★ إضافة
+        },
         resources: {
           User: { properties: { phone: 'رقم الهاتف', name: 'الاسم', role: 'الصلاحية', posNumber: 'رقم نقطة البيع', balance: 'الرصيد', isActive: 'فعّال' } },
           Transaction: { properties: { senderId: 'المرسل', receiverId: 'المستلم', amount: 'المبلغ', status: 'الحالة', type: 'النوع', note: 'ملاحظة', refId: 'المرجع', createdAt: 'التاريخ' } },
           BillPayment: { properties: { userId: 'المستخدم', category: 'الفئة', provider: 'المزوّد', accountNumber: 'رقم الحساب', amount: 'المبلغ', status: 'الحالة' } },
-          CashoutCode: { properties: { userId: 'المستخدم', type: 'النوع', amount: 'المبلغ', code: 'الكود', status: 'الحالة', expiresAt: 'ينتهي في' } }
+          CashoutCode: { properties: { userId: 'المستخدم', type: 'النوع', amount: 'المبلغ', code: 'الكود', status: 'الحالة', expiresAt: 'ينتهي في' } },
+          JawaliSession: {  // ★ إضافة
+            properties: {
+              userId: 'المستخدم',
+              accessToken: 'توكن الوصول',
+              walletToken: 'توكن المحفظة',
+              orgId: 'رقم المنظمة',
+              externalUser: 'المستخدم الخارجي',
+              status: 'الحالة',
+              expiresAt: 'ينتهي في',
+              createdAt: 'تاريخ الإنشاء',
+            }
+          }
         }
       }
     }
