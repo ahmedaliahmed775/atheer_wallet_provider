@@ -28,7 +28,6 @@ router.get('/balance', async (req, res) => {
 });
 
 // ─── POST /api/v1/wallet/transfer ────────────────────────
-// P2P - customer to customer direct transfer
 router.post('/transfer', async (req, res) => {
   const body = req.body?.body || req.body;
   const { receiverPhone, amount, note } = body;
@@ -93,7 +92,6 @@ router.post('/transfer', async (req, res) => {
 });
 
 // ─── POST /api/v1/wallet/transfer-external ───────────────
-// Transfer to non-subscriber — generates a cashout code
 router.post('/transfer-external', async (req, res) => {
   const body = req.body?.body || req.body;
   const { recipientPhone, recipientName, amount, note } = body;
@@ -102,7 +100,6 @@ router.post('/transfer-external', async (req, res) => {
     return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رقم المستلم والمبلغ إلزاميان' });
   }
 
-  // Check if recipient is already a subscriber
   const existing = await User.findOne({ where: { phone: recipientPhone } });
   if (existing) {
     return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'المستلم مشترك في النظام — استخدم التحويل العادي' });
@@ -117,13 +114,11 @@ router.post('/transfer-external', async (req, res) => {
       return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رصيدك غير كافٍ' });
     }
 
-    // Deduct
     sender.balance = parseFloat(sender.balance) - parseFloat(amount);
     await sender.save({ transaction: t });
 
-    // Generate 6-digit code
     const code = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     const cashoutCode = await CashoutCode.create({
       userId: sender.id,
@@ -173,7 +168,6 @@ router.post('/transfer-external', async (req, res) => {
 });
 
 // ─── POST /api/v1/wallet/pay-bill ────────────────────────
-// Bill payment: telecom, internet, electricity, water
 router.post('/pay-bill', async (req, res) => {
   const body = req.body?.body || req.body;
   const { category, provider, accountNumber, amount } = body;
@@ -245,7 +239,6 @@ router.post('/pay-bill', async (req, res) => {
 });
 
 // ─── POST /api/v1/wallet/generate-cashout ─────────────────
-// Generate a cash withdrawal code for agent pickup
 router.post('/generate-cashout', async (req, res) => {
   const body = req.body?.body || req.body;
   const { amount } = body;
@@ -263,7 +256,6 @@ router.post('/generate-cashout', async (req, res) => {
       return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'رصيدك غير كافٍ' });
     }
 
-    // Expire old active codes
     await CashoutCode.update(
       { status: 'EXPIRED' },
       { where: { userId: user.id, type: 'SELF_CASHOUT', status: 'ACTIVE' }, transaction: t }
@@ -273,7 +265,7 @@ router.post('/generate-cashout', async (req, res) => {
     await user.save({ transaction: t });
 
     const code = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
 
     const cashout = await CashoutCode.create({
       userId: user.id,
@@ -317,7 +309,6 @@ router.post('/generate-cashout', async (req, res) => {
 });
 
 // ─── POST /api/v1/wallet/cash-in ─────────────────────────
-// Cash deposit (simulated — in real life done by agent)
 router.post('/cash-in', async (req, res) => {
   const body = req.body?.body || req.body;
   const { amount, agentCode } = body;
@@ -366,7 +357,6 @@ router.post('/cash-in', async (req, res) => {
 });
 
 // ─── POST /api/v1/wallet/qr-pay ─────────────────────────
-// Customer pays merchant by entering merchant phone
 router.post('/qr-pay', async (req, res) => {
   const body = req.body?.body || req.body;
   const { posNumber, amount, note } = body;
@@ -480,7 +470,6 @@ router.get('/transactions', async (req, res) => {
 });
 
 // ─── GET /api/v1/wallet/transactions/:id ─────────────────
-// Single transaction detail for receipt
 router.get('/transactions/:id', async (req, res) => {
   try {
     const uid = req.user.id;
@@ -525,7 +514,6 @@ router.get('/transactions/:id', async (req, res) => {
 });
 
 // ─── GET /api/v1/wallet/services ─────────────────────────
-// Available bill payment services
 router.get('/services', async (req, res) => {
   const services = [
     { category: 'TELECOM', providers: [
@@ -555,6 +543,30 @@ router.get('/profile', async (req, res) => {
     ResponseCode: 0,
     body: { id: user.id, name: user.name, phone: user.phone, role: user.role, balance: parseFloat(user.balance) }
   });
+});
+
+// ★ إضافة: POST /api/v1/wallet/fcm-token — كان مفقوداً!
+// التطبيق يرسل FCM token لكن المسار لم يكن موجوداً
+router.post('/fcm-token', async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+    if (!fcmToken) {
+      return res.status(400).json({ ResponseCode: 400, ResponseMessage: 'fcmToken مطلوب' });
+    }
+
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return res.status(404).json({ ResponseCode: 404, ResponseMessage: 'المستخدم غير موجود' });
+    }
+
+    user.fcmToken = fcmToken;
+    await user.save();
+
+    return res.json({ ResponseCode: 0, ResponseMessage: 'تم تحديث توكن FCM بنجاح' });
+  } catch (err) {
+    console.error('[FCM_TOKEN]', err);
+    return res.status(500).json({ ResponseCode: 500, ResponseMessage: 'فشل تحديث توكن FCM' });
+  }
 });
 
 export default router;
