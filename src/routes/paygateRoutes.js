@@ -2,6 +2,7 @@
 // Jawali Payment Gateway — محاكاة مطابقة ١٠٠٪ للكود المصدري
 // ─────────────────────────────────────────────────────────────
 // مرجع: https://github.com/Alsharie/jawali-payment/blob/main/src/Services/JawaliService.php
+// مرجع: https://www.npmjs.com/package/@alsharie/jawalijs
 //
 // المسارات:
 //   POST /oauth/token       → تسجيل دخول OAuth2 (form-encoded)
@@ -20,6 +21,23 @@
 // بنية الاستجابة:
 //   { "responseBody": { ... }, "responseStatus": { "systemStatus": "0", "systemStatusDesc": "..." } }
 //
+// ═══════════════════════════════════════════════════════════════
+// التعديلات المطبقة للتطابق مع @alsharie/jawalijs:
+//
+// 1. PAYWA.WALLETAUTHENTICATION response:
+//    - تغيير accessToken → access_token (snake_case) ليطابق ما يقرأه JS SDK
+//    - إضافة حقول org_value و org_name كما في المواصفات الأصلية
+//
+// 2. PAYAG.ECOMMCASHOUT response:
+//    - تغيير txnamount → amount (حقل الصرف مختلف عن الاستعلام)
+//    - تغيير state → status (حقل الصرف يستخدم status وليس state)
+//    - إضافة حقل balance
+//    - تغيير issuerTrxRef → IssuerRef (capital I) كما في PHP SDK
+//    - إضافة حقل refId
+//    - تغيير txncurrency → Currency (capital C) كما في JS SDK
+//    - إزالة حقول voucher, receiverMobile, inquiryRef من responseBody
+//      (هذه حقول استعلام فقط وليست جزءاً من استجابة الصرف)
+// ═══════════════════════════════════════════════════════════════
 // ─────────────────────────────────────────────────────────────
 
 import { Router } from 'express';
@@ -65,6 +83,9 @@ const MERCHANT = {
   external_user:    process.env.JAWALI_MERCHANT_EXTERNAL_USER   || 'atheer_ext_1',
   tokenExpiry:      parseInt(process.env.JAWALI_TOKEN_EXPIRY    || '3600') * 1000,
   walletExpiry:     parseInt(process.env.JAWALI_WALLET_TOKEN_EXPIRY || '1800') * 1000,
+  // قيمة واسم المنظمة — مطابق لـ responseBody في PAYWA.WALLETAUTHENTICATION
+  org_value:        process.env.JAWALI_MERCHANT_ORG_VALUE       || 'ORG-001',
+  org_name:         process.env.JAWALI_MERCHANT_ORG_NAME        || 'Atheer Wallet',
 };
 
 // ─── Logging — مطابق لـ JAWALI_LOGGING_ENABLED ──────────────
@@ -99,6 +120,7 @@ function logResponse(url, status, data) {
 // POST /oauth/token — LOGIN TO SYSTEM
 // ═══════════════════════════════════════════════════════════════
 // مطابق لـ JawaliService::loginToSystem()
+// مطابق لـ @alsharie/jawalijs → login()
 //
 // Content-Type: application/x-www-form-urlencoded
 // Body (form):
@@ -109,7 +131,7 @@ function logResponse(url, status, data) {
 //   username=xxx
 //   password=xxx
 //
-// Response:
+// Response (مطابق لـ JawaliLoginResponse):
 //   { access_token, token_type, refresh_token, expires_in, scope }
 
 // يجب قبول form-encoded — مطابق لـ Http::asForm()
@@ -160,6 +182,7 @@ router.post('/oauth/token', (req, res) => {
 // POST /v1/ws/callWS — كل العمليات (PAYWA + PAYAG)
 // ═══════════════════════════════════════════════════════════════
 // مطابق لـ JawaliService::walletAuthentication(), ecommerceInquiry(), ecommerceCashout()
+// مطابق لـ @alsharie/jawalijs → walletAuth(), ecommerceInquiry(), ecommcaShout()
 //
 // التمييز عبر: header.serviceDetail.serviceName
 //   - "PAYWA.WALLETAUTHENTICATION" → مصادقة المحفظة
@@ -234,7 +257,16 @@ router.post('/v1/ws/callWS', (req, res) => {
 
 // ─── PAYWA.WALLETAUTHENTICATION ──────────────────────────────
 // مطابق لـ JawaliService::walletAuthentication()
+// مطابق لـ @alsharie/jawalijs → walletAuth()
+//
 // body: { identifier, password }
+//
+// ★ تعديل: استجابة responseBody تستخدم access_token (snake_case)
+//   وليس accessToken (camelCase) — مطابق لما يقرأه JS SDK:
+//   this.authHelper.setWalletToken(responseJson.responseBody.access_token)
+//
+// ★ إضافة: حقول org_value و org_name — مطابق للمواصفات الأصلية
+//   JawaliWalletAuthResponse: getOrgValue(), getOrgName()
 
 function handleWalletAuth(req, res, body, header) {
   const { identifier, password } = body;
@@ -255,9 +287,12 @@ function handleWalletAuth(req, res, body, header) {
     expiresAt: Date.now() + MERCHANT.walletExpiry,
   });
 
+  // ★ تعديل: استخدام access_token (snake_case) بدلاً من accessToken
+  // + إضافة org_value و org_name
   const resp = successResponse({
-    accessToken: walletToken,
-    expiresIn: MERCHANT.walletExpiry / 1000,
+    access_token: walletToken,       // ★ snake_case — يطابق JS SDK: responseBody.access_token
+    org_value: MERCHANT.org_value,   // ★ إضافة — يطابق JawaliWalletAuthResponse.getOrgValue()
+    org_name: MERCHANT.org_name,     // ★ إضافة — يطابق JawaliWalletAuthResponse.getOrgName()
   });
 
   logResponse('/v1/ws/callWS [WALLET_AUTH]', 200, resp);
@@ -266,7 +301,12 @@ function handleWalletAuth(req, res, body, header) {
 
 // ─── PAYAG.ECOMMERCEINQUIRY ──────────────────────────────────
 // مطابق لـ JawaliService::ecommerceInquiry()
+// مطابق لـ @alsharie/jawalijs → ecommerceInquiry()
+//
 // body: { agentWallet, voucher, receiverMobile, password, accessToken, refId, purpose }
+//
+// استجابة الاستعلام (لم تتغير — مطابقة بالفعل):
+//   responseBody.txnamount, txncurrency, state, issuerTrxRef, trxDate
 
 function handleEcommerceInquiry(req, res, body, header) {
   const { agentWallet, voucher, receiverMobile, password, accessToken, refId, purpose } = body;
@@ -331,7 +371,34 @@ function handleEcommerceInquiry(req, res, body, header) {
 
 // ─── PAYAG.ECOMMCASHOUT ──────────────────────────────────────
 // مطابق لـ JawaliService::ecommerceCashout()
+// مطابق لـ @alsharie/jawalijs → ecommcaShout()
+//
 // body: { agentWallet, voucher, receiverMobile, password, accessToken, refId, purpose }
+//
+// ═══════════════════════════════════════════════════════════════
+// ★ تعديل جوهري: استجابة الصرف تختلف عن الاستعلام!
+// ═══════════════════════════════════════════════════════════════
+//
+// استجابة الصرف في المواصفات الأصلية (PHP SDK + JS SDK):
+//   {
+//     "status": "SUCCESS",           // ★ NOT "state" — الصرف يستخدم status
+//     "amount": "1000",              // ★ NOT "txnamount" — الصرف يستخدم amount
+//     "balance": "50000",            // ★ إضافة — رصيد المحفظة المتبقي
+//     "refId": "1709553601",         // ★ إضافة — رقم المرجع
+//     "IssuerRef": "ISSUER-REF-67890", // ★ NOT "issuerTrxRef" — IssuerRef بحرف I كبير
+//     "trxDate": "2024-03-04T12:30:00",
+//     "Currency": "YER"              // ★ إضافة — العملة بحرف C كبير
+//   }
+//
+// الخلافات التي تم تصحيحها:
+//   - txnamount → amount        (PHP: getAmount() → responseBody.amount)
+//   - state     → status        (PHP: getStatue() → responseBody.status)
+//   - txncurrency → Currency    (JS: getCurrency() → responseBody.Currency)
+//   - issuerTrxRef → IssuerRef  (PHP: getIssuerRef() → responseBody.IssuerRef)
+//   - إضافة balance             (PHP: getBalance() → responseBody.balance)
+//   - إضافة refId               (PHP: getTransactionRef() → responseBody.refId)
+//   - إزالة voucher, receiverMobile, inquiryRef (ليست جزءاً من استجابة الصرف)
+// ═══════════════════════════════════════════════════════════════
 
 function handleEcommerceCashout(req, res, body, header) {
   const { agentWallet, voucher, receiverMobile, password, accessToken, refId, purpose } = body;
@@ -367,17 +434,26 @@ function handleEcommerceCashout(req, res, body, header) {
   const isSuccess = Math.random() < 0.95;
   const issuerTrxRef = generateRef('JWL-CSH');
 
+  // ★ توليد refId للصرف — مطابق لما يرسله JS SDK (Date.now() بالمللي ثانية)
+  const cashoutRefId = refId || Date.now().toString();
+
+  // ★ رصيد المحفظة المحاكي
+  const simulatedBalance = String(50000 - parseInt(inquiry.txnamount));
+
   if (!isSuccess) {
     inquiry.state = 'FAILED';
     inquiryStore.set(compositeKey, inquiry);
 
+    // ★ تعديل: استجابة فشل الصرف تستخدم حقول الصرف (status, amount) وليس الاستعلام
     const resp = errorResponse('CASHOUT_FAILED', 'Cashout operation failed');
     resp.responseBody = {
-      txnamount: inquiry.txnamount,
-      txncurrency: inquiry.txncurrency,
-      state: 'FAILED',
-      issuerTrxRef,
+      status: 'FAILED',                  // ★ status وليس state
+      amount: inquiry.txnamount,         // ★ amount وليس txnamount
+      balance: simulatedBalance,         // ★ إضافة
+      refId: cashoutRefId,              // ★ إضافة
+      IssuerRef: issuerTrxRef,          // ★ IssuerRef بحرف I كبير
       trxDate: new Date().toISOString(),
+      Currency: inquiry.txncurrency,    // ★ Currency بحرف C كبير
     };
     logResponse('/v1/ws/callWS [CASHOUT-FAIL]', 200, resp);
     return res.json(resp);
@@ -387,15 +463,15 @@ function handleEcommerceCashout(req, res, body, header) {
   inquiry.state = 'SUCCESS';
   inquiryStore.delete(compositeKey);
 
+  // ★ تعديل: استجابة نجاح الصرف — حقول مطابقة للمواصفات الأصلية
   const resp = successResponse({
-    txnamount: inquiry.txnamount,
-    txncurrency: inquiry.txncurrency,
-    state: 'SUCCESS',
-    issuerTrxRef,
-    inquiryRef: inquiry.issuerTrxRef,
+    status: 'SUCCESS',                   // ★ status وليس state
+    amount: inquiry.txnamount,           // ★ amount وليس txnamount
+    balance: simulatedBalance,           // ★ إضافة — رصيد المحفظة
+    refId: cashoutRefId,                // ★ إضافة — رقم مرجع الصرف
+    IssuerRef: issuerTrxRef,            // ★ IssuerRef بحرف I كبير (PHP SDK)
     trxDate: new Date().toISOString(),
-    voucher,
-    receiverMobile,
+    Currency: inquiry.txncurrency,      // ★ Currency بحرف C كبير (JS SDK)
   });
 
   logResponse('/v1/ws/callWS [CASHOUT-OK]', 200, resp);
