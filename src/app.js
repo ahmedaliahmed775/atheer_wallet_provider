@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
+// Rate limiting — API
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
@@ -34,6 +34,24 @@ const authLimiter = rateLimit({
 });
 app.use('/api/v1/auth/', authLimiter);
 
+// ★ إضافة: Rate limiting لمسارات Jawali — مطابق لـ JAWALI_TIMEOUT
+const jawaliLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,  // أقل صرامة من auth لكن أكثر من API العادي
+  standardHeaders: true,
+  message: {
+    responseBody: null,
+    responseStatus: {
+      systemStatus: '1',
+      systemStatusDesc: 'Too many requests, please try again later',
+      systemStatusDescNative: 'طلبات كثيرة، حاول لاحقاً',
+      errorCode: 'RATE_LIMITED',
+    }
+  }
+});
+app.use('/oauth/', jawaliLimiter);
+app.use('/v1/ws/', jawaliLimiter);
+
 // CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -49,13 +67,11 @@ app.use('/api/v1/wallet',   walletRoutes);
 app.use('/api/v1/merchant', merchantRoutes);
 
 // ─── Jawali Paygate (محاكاة مطابقة ١٠٠٪ لبوابة جوالي) ────
-// POST /oauth/token     → تسجيل دخول OAuth2
-// POST /v1/ws/callWS    → كل العمليات (PAYWA/PAYAG) عبر serviceName
 app.use('/', paygateRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: '4.0.0', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', version: '4.1.0', timestamp: new Date().toISOString() });
 });
 
 // 404
